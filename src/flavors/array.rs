@@ -21,7 +21,7 @@ use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
-use notify::{Context, Operation, Selected, SyncWaker, Token};
+use notify::{Context, Selected, SyncWaker};
 use utils::{Backoff, CachePadded};
 
 /// A slot in a channel.
@@ -199,7 +199,6 @@ impl<T> Channel<T> {
 
     /// Sends a message into the channel.
     pub fn send(&self, mut msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
-        let token = &mut Token::default();
         loop {
             // Try sending a message several times.
             let backoff = Backoff::new();
@@ -221,8 +220,7 @@ impl<T> Channel<T> {
 
             Context::with(|cx| {
                 // Prepare for blocking until a receiver wakes us up.
-                let oper = Operation::hook(token);
-                self.senders.register(oper, cx);
+                self.senders.register(cx);
 
                 // Has the channel become ready just now?
                 if !self.is_full() || self.is_disconnected() {
@@ -235,9 +233,9 @@ impl<T> Channel<T> {
                 match sel {
                     Selected::Waiting => unreachable!(),
                     Selected::Aborted | Selected::Disconnected => {
-                        self.senders.unregister(oper).unwrap();
+                        self.senders.unregister(cx).unwrap();
                     }
-                    Selected::Operation(_) => {}
+                    Selected::Operation => {}
                 }
             });
 
@@ -323,7 +321,6 @@ impl<T> Channel<T> {
 
     /// Receives a message from the channel.
     pub fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError> {
-        let token = &mut Token::default();
         loop {
             // Try receiving a message several times.
             let backoff = Backoff::new();
@@ -343,8 +340,7 @@ impl<T> Channel<T> {
 
             Context::with(|cx| {
                 // Prepare for blocking until a sender wakes us up.
-                let oper = Operation::hook(token);
-                self.receivers.register(oper, cx);
+                self.receivers.register(cx);
 
                 // Has the channel become ready just now?
                 if !self.is_empty() || self.is_disconnected() {
@@ -357,11 +353,11 @@ impl<T> Channel<T> {
                 match sel {
                     Selected::Waiting => unreachable!(),
                     Selected::Aborted | Selected::Disconnected => {
-                        self.receivers.unregister(oper).unwrap();
+                        self.receivers.unregister(cx).unwrap();
                         // If the channel was disconnected, we still have to check for remaining
                         // messages.
                     }
-                    Selected::Operation(_) => {}
+                    Selected::Operation => {}
                 }
             });
 

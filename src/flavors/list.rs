@@ -8,7 +8,7 @@ use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
-use notify::{Context, Operation, Selected, SyncWaker, Token};
+use notify::{Context, Selected, SyncWaker};
 use utils::{Backoff, CachePadded};
 
 // Bits indicating the state of a slot:
@@ -340,7 +340,6 @@ impl<T> Channel<T> {
 
     /// Receives a message from the channel.
     pub fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError> {
-        let token = &mut Token::default();
         loop {
             // Try receiving a message several times.
             let backoff = Backoff::new();
@@ -360,8 +359,7 @@ impl<T> Channel<T> {
 
             // Prepare for blocking until a sender wakes us up.
             Context::with(|cx| {
-                let oper = Operation::hook(token);
-                self.receivers.register(oper, cx);
+                self.receivers.register(cx);
 
                 // Has the channel become ready just now?
                 if !self.is_empty() || self.is_disconnected() {
@@ -374,11 +372,11 @@ impl<T> Channel<T> {
                 match sel {
                     Selected::Waiting => unreachable!(),
                     Selected::Aborted | Selected::Disconnected => {
-                        self.receivers.unregister(oper).unwrap();
+                        self.receivers.unregister(cx).unwrap();
                         // If the channel was disconnected, we still have to check for remaining
                         // messages.
                     }
-                    Selected::Operation(_) => {}
+                    Selected::Operation => {}
                 }
             });
 

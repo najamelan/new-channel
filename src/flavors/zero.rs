@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
-use notify::{Context, Operation, Selected, Token, Waker};
-use utils::{Backoff, Mutex};
+use notify::{Context, Selected, Waker};
+use utils::{Backoff, Spinlock};
 
 /// A pointer to a packet.
 pub type ZeroToken = usize;
@@ -64,7 +64,7 @@ struct Inner {
 /// Zero-capacity channel.
 pub struct Channel<T> {
     /// Inner representation of the channel.
-    inner: Mutex<Inner>,
+    inner: Spinlock<Inner>,
 
     /// Indicates that dropping a `Channel<T>` may drop values of type `T`.
     _marker: PhantomData<T>,
@@ -74,7 +74,7 @@ impl<T> Channel<T> {
     /// Constructs a new zero-capacity channel.
     pub fn new() -> Self {
         Channel {
-            inner: Mutex::new(Inner {
+            inner: Spinlock::new(Inner {
                 senders: Waker::new(),
                 receivers: Waker::new(),
                 is_disconnected: false,
@@ -84,26 +84,26 @@ impl<T> Channel<T> {
     }
 
     /// Writes a message into the packet.
-    pub unsafe fn write(&self, token: &mut Token, msg: T) -> Result<(), T> {
+    pub unsafe fn write(&self, token: &mut ZeroToken, msg: T) -> Result<(), T> {
         // If there is no packet, the channel is disconnected.
-        if token.zero == 0 {
+        if *token == 0 {
             return Err(msg);
         }
 
-        let packet = &*(token.zero as *const Packet<T>);
+        let packet = &*(*token as *const Packet<T>);
         packet.msg.get().write(Some(msg));
         packet.ready.store(true, Ordering::Release);
         Ok(())
     }
 
     /// Reads a message from the packet.
-    pub unsafe fn read(&self, token: &mut Token) -> Result<T, ()> {
+    pub unsafe fn read(&self, token: &mut ZeroToken) -> Result<T, ()> {
         // If there is no packet, the channel is disconnected.
-        if token.zero == 0 {
+        if *token == 0 {
             return Err(());
         }
 
-        let packet = &*(token.zero as *const Packet<T>);
+        let packet = &*(*token as *const Packet<T>);
 
         // The message has been in the packet from the beginning, so there is no need to wait
         // for it. However, after reading the message, we need to set `ready` to `true` in
@@ -115,12 +115,12 @@ impl<T> Channel<T> {
 
     /// Attempts to send a message into the channel.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        let token = &mut Token::default();
+        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting receiver, pair up with it.
         if let Some(operation) = inner.receivers.try_select() {
-            token.zero = operation.packet;
+            *token = operation.packet;
             drop(inner);
             unsafe {
                 self.write(token, msg).ok().unwrap();
@@ -135,12 +135,12 @@ impl<T> Channel<T> {
 
     /// Sends a message into the channel.
     pub fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
-        let token = &mut Token::default();
+        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting receiver, pair up with it.
         if let Some(operation) = inner.receivers.try_select() {
-            token.zero = operation.packet;
+            *token = operation.packet;
             drop(inner);
             unsafe {
                 self.write(token, msg).ok().unwrap();
@@ -154,11 +154,10 @@ impl<T> Channel<T> {
 
         Context::with(|cx| {
             // Prepare for blocking until a receiver wakes us up.
-            let oper = Operation::hook(token);
             let packet = Packet::<T>::new(msg);
             inner
                 .senders
-                .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
+                .register_with_packet(&packet as *const Packet<T> as usize, cx);
             drop(inner);
 
             // Block the current thread.
@@ -167,16 +166,16 @@ impl<T> Channel<T> {
             match sel {
                 Selected::Waiting => unreachable!(),
                 Selected::Aborted => {
-                    self.inner.lock().senders.unregister(oper).unwrap();
+                    self.inner.lock().senders.unregister(cx).unwrap();
                     let msg = unsafe { packet.msg.get().replace(None).unwrap() };
                     Err(SendTimeoutError::Timeout(msg))
                 }
                 Selected::Disconnected => {
-                    self.inner.lock().senders.unregister(oper).unwrap();
+                    self.inner.lock().senders.unregister(cx).unwrap();
                     let msg = unsafe { packet.msg.get().replace(None).unwrap() };
                     Err(SendTimeoutError::Disconnected(msg))
                 }
-                Selected::Operation(_) => {
+                Selected::Operation => {
                     // Wait until the message is read, then drop the packet.
                     packet.wait_ready();
                     Ok(())
@@ -187,12 +186,12 @@ impl<T> Channel<T> {
 
     /// Attempts to receive a message without blocking.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        let token = &mut Token::default();
+        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting sender, pair up with it.
         if let Some(operation) = inner.senders.try_select() {
-            token.zero = operation.packet;
+            *token = operation.packet;
             drop(inner);
             unsafe { self.read(token).map_err(|_| TryRecvError::Disconnected) }
         } else if inner.is_disconnected {
@@ -204,12 +203,12 @@ impl<T> Channel<T> {
 
     /// Receives a message from the channel.
     pub fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError> {
-        let token = &mut Token::default();
+        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting sender, pair up with it.
         if let Some(operation) = inner.senders.try_select() {
-            token.zero = operation.packet;
+            *token = operation.packet;
             drop(inner);
             unsafe {
                 return self.read(token).map_err(|_| RecvTimeoutError::Disconnected);
@@ -222,11 +221,10 @@ impl<T> Channel<T> {
 
         Context::with(|cx| {
             // Prepare for blocking until a sender wakes us up.
-            let oper = Operation::hook(token);
             let packet = Packet::<T>::empty();
             inner
                 .receivers
-                .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
+                .register_with_packet(&packet as *const Packet<T> as usize, cx);
             drop(inner);
 
             // Block the current thread.
@@ -235,14 +233,14 @@ impl<T> Channel<T> {
             match sel {
                 Selected::Waiting => unreachable!(),
                 Selected::Aborted => {
-                    self.inner.lock().receivers.unregister(oper).unwrap();
+                    self.inner.lock().receivers.unregister(cx).unwrap();
                     Err(RecvTimeoutError::Timeout)
                 }
                 Selected::Disconnected => {
-                    self.inner.lock().receivers.unregister(oper).unwrap();
+                    self.inner.lock().receivers.unregister(cx).unwrap();
                     Err(RecvTimeoutError::Disconnected)
                 }
-                Selected::Operation(_) => {
+                Selected::Operation => {
                     // Wait until the message is provided, then read it.
                     packet.wait_ready();
                     unsafe { Ok(packet.msg.get().replace(None).unwrap()) }

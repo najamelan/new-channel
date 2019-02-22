@@ -6,37 +6,7 @@ use std::sync::Arc;
 use std::thread::{self, Thread, ThreadId};
 use std::time::Instant;
 
-use flavors;
-use utils::{Backoff, Mutex};
-
-/// Temporary data that gets initialized during select or a blocking operation, and is consumed by
-/// `read` or `write`.
-///
-/// Each field contains data associated with a specific channel flavor.
-#[derive(Default)]
-pub struct Token {
-    pub zero: flavors::zero::ZeroToken,
-}
-
-/// Identifier associated with an operation by a specific thread on a specific channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Operation(usize);
-
-impl Operation {
-    /// Creates an operation identifier from a mutable reference.
-    ///
-    /// This function essentially just turns the address of the reference into a number. The
-    /// reference should point to a variable that is specific to the thread and the operation,
-    /// and is alive for the entire duration of select or blocking operation.
-    #[inline]
-    pub fn hook<T>(r: &mut T) -> Operation {
-        let val = r as *mut T as usize;
-        // Make sure that the pointer address doesn't equal the numerical representation of
-        // `Selected::{Waiting, Aborted, Disconnected}`.
-        assert!(val > 2);
-        Operation(val)
-    }
-}
+use utils::{Backoff, Spinlock};
 
 /// Current state of a select or a blocking operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +21,7 @@ pub enum Selected {
     Disconnected,
 
     /// An operation became ready because a message can be sent or received.
-    Operation(Operation),
+    Operation,
 }
 
 impl From<usize> for Selected {
@@ -61,7 +31,8 @@ impl From<usize> for Selected {
             0 => Selected::Waiting,
             1 => Selected::Aborted,
             2 => Selected::Disconnected,
-            oper => Selected::Operation(Operation(oper)),
+            3 => Selected::Operation,
+            _ => panic!("cannot convert `usize` to `Selected`"),
         }
     }
 }
@@ -73,16 +44,13 @@ impl Into<usize> for Selected {
             Selected::Waiting => 0,
             Selected::Aborted => 1,
             Selected::Disconnected => 2,
-            Selected::Operation(Operation(val)) => val,
+            Selected::Operation => 3,
         }
     }
 }
 
 /// Represents a thread blocked on a specific channel operation.
 pub struct Entry {
-    /// The operation.
-    pub oper: Operation,
-
     /// Optional packet.
     pub packet: usize,
 
@@ -110,15 +78,14 @@ impl Waker {
 
     /// Registers a select operation.
     #[inline]
-    pub fn register(&mut self, oper: Operation, cx: &Context) {
-        self.register_with_packet(oper, 0, cx);
+    pub fn register(&mut self, cx: &Context) {
+        self.register_with_packet(0, cx);
     }
 
     /// Registers a select operation and a packet.
     #[inline]
-    pub fn register_with_packet(&mut self, oper: Operation, packet: usize, cx: &Context) {
+    pub fn register_with_packet(&mut self, packet: usize, cx: &Context) {
         self.selectors.push(Entry {
-            oper,
             packet,
             cx: cx.clone(),
         });
@@ -126,12 +93,12 @@ impl Waker {
 
     /// Unregisters a select operation.
     #[inline]
-    pub fn unregister(&mut self, oper: Operation) -> Option<Entry> {
+    pub fn unregister(&mut self, cx: &Context) -> Option<Entry> {
         if let Some((i, _)) = self
             .selectors
             .iter()
             .enumerate()
-            .find(|&(_, entry)| entry.oper == oper)
+            .find(|&(_, entry)| &entry.cx == cx)
         {
             let entry = self.selectors.remove(i);
             Some(entry)
@@ -152,8 +119,7 @@ impl Waker {
                 // Does the entry belong to a different thread?
                 if self.selectors[i].cx.thread_id() != thread_id {
                     // Try selecting this operation.
-                    let sel = Selected::Operation(self.selectors[i].oper);
-                    let res = self.selectors[i].cx.try_select(sel);
+                    let res = self.selectors[i].cx.try_select(Selected::Operation);
 
                     if res.is_ok() {
                         // Provide the packet.
@@ -201,7 +167,7 @@ impl Drop for Waker {
 /// This is a simple wrapper around `Waker` that internally uses a mutex for synchronization.
 pub struct SyncWaker {
     /// The inner `Waker`.
-    inner: Mutex<Waker>,
+    inner: Spinlock<Waker>,
 
     /// `true` if the waker is empty.
     is_empty: AtomicBool,
@@ -212,31 +178,27 @@ impl SyncWaker {
     #[inline]
     pub fn new() -> Self {
         SyncWaker {
-            inner: Mutex::new(Waker::new()),
+            inner: Spinlock::new(Waker::new()),
             is_empty: AtomicBool::new(false),
         }
     }
 
     /// Registers the current thread with an operation.
     #[inline]
-    pub fn register(&self, oper: Operation, cx: &Context) {
+    pub fn register(&self, cx: &Context) {
         let mut inner = self.inner.lock();
-        inner.register(oper, cx);
-        self.is_empty.store(
-            inner.selectors.is_empty(),
-            Ordering::SeqCst,
-        );
+        inner.register(cx);
+        self.is_empty
+            .store(inner.selectors.is_empty(), Ordering::SeqCst);
     }
 
     /// Unregisters an operation previously registered by the current thread.
     #[inline]
-    pub fn unregister(&self, oper: Operation) -> Option<Entry> {
+    pub fn unregister(&self, cx: &Context) -> Option<Entry> {
         let mut inner = self.inner.lock();
-        let entry = inner.unregister(oper);
-        self.is_empty.store(
-            inner.selectors.is_empty(),
-            Ordering::SeqCst,
-        );
+        let entry = inner.unregister(cx);
+        self.is_empty
+            .store(inner.selectors.is_empty(), Ordering::SeqCst);
         entry
     }
 
@@ -246,10 +208,8 @@ impl SyncWaker {
         if !self.is_empty.load(Ordering::SeqCst) {
             let mut inner = self.inner.lock();
             inner.try_select();
-            self.is_empty.store(
-                inner.selectors.is_empty(),
-                Ordering::SeqCst,
-            );
+            self.is_empty
+                .store(inner.selectors.is_empty(), Ordering::SeqCst);
         }
     }
 
@@ -258,10 +218,8 @@ impl SyncWaker {
     pub fn disconnect(&self) {
         let mut inner = self.inner.lock();
         inner.disconnect();
-        self.is_empty.store(
-            inner.selectors.is_empty(),
-            Ordering::SeqCst,
-        );
+        self.is_empty
+            .store(inner.selectors.is_empty(), Ordering::SeqCst);
     }
 }
 
@@ -442,5 +400,12 @@ impl Context {
     #[inline]
     pub fn thread_id(&self) -> ThreadId {
         self.inner.thread_id
+    }
+}
+
+impl PartialEq for Context {
+    #[inline]
+    fn eq(&self, other: &Context) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
