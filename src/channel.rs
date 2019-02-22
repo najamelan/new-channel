@@ -17,7 +17,7 @@ use flavors;
 ///
 /// ```
 /// use std::thread;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -65,7 +65,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use crossbeam_channel::bounded;
+/// use new_mpsc::bounded;
 ///
 /// let (s, r) = bounded(1);
 ///
@@ -88,7 +88,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use crossbeam_channel::bounded;
+/// use new_mpsc::bounded;
 ///
 /// let (s, r) = bounded(0);
 ///
@@ -129,7 +129,7 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 ///
 /// ```
 /// use std::thread;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s1, r) = unbounded();
 /// let s2 = s1.clone();
@@ -176,7 +176,7 @@ impl<T> Sender<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::{bounded, TrySendError};
+    /// use new_mpsc::{bounded, TrySendError};
     ///
     /// let (s, r) = bounded(1);
     ///
@@ -208,7 +208,7 @@ impl<T> Sender<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use crossbeam_channel::{bounded, SendError};
+    /// use new_mpsc::{bounded, SendError};
     ///
     /// let (s, r) = bounded(1);
     /// assert_eq!(s.send(1), Ok(()));
@@ -248,7 +248,7 @@ impl<T> Sender<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use crossbeam_channel::{bounded, SendTimeoutError};
+    /// use new_mpsc::{bounded, SendTimeoutError};
     ///
     /// let (s, r) = bounded(0);
     ///
@@ -288,7 +288,7 @@ impl<T> Sender<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     /// assert!(s.is_empty());
@@ -311,7 +311,7 @@ impl<T> Sender<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::bounded;
+    /// use new_mpsc::bounded;
     ///
     /// let (s, r) = bounded(1);
     ///
@@ -332,7 +332,7 @@ impl<T> Sender<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     /// assert_eq!(s.len(), 0);
@@ -387,7 +387,7 @@ impl<T> fmt::Debug for Sender<T> {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -434,7 +434,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::{unbounded, TryRecvError};
+    /// use new_mpsc::{unbounded, TryRecvError};
     ///
     /// let (s, r) = unbounded();
     /// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
@@ -468,7 +468,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use crossbeam_channel::{unbounded, RecvError};
+    /// use new_mpsc::{unbounded, RecvError};
     ///
     /// let (s, r) = unbounded();
     ///
@@ -504,7 +504,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use crossbeam_channel::{unbounded, RecvTimeoutError};
+    /// use new_mpsc::{unbounded, RecvTimeoutError};
     ///
     /// let (s, r) = unbounded();
     ///
@@ -544,7 +544,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     ///
@@ -567,7 +567,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::bounded;
+    /// use new_mpsc::bounded;
     ///
     /// let (s, r) = bounded(1);
     ///
@@ -588,7 +588,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     /// assert_eq!(r.len(), 0);
@@ -617,7 +617,7 @@ impl<T> Receiver<T> {
     ///
     /// ```
     /// use std::thread;
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     ///
@@ -650,7 +650,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use crossbeam_channel::unbounded;
+    /// use new_mpsc::unbounded;
     ///
     /// let (s, r) = unbounded::<i32>();
     ///
@@ -735,7 +735,7 @@ impl<T> IntoIterator for Receiver<T> {
 ///
 /// ```
 /// use std::thread;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -784,7 +784,7 @@ impl<'a, T> fmt::Debug for Iter<'a, T> {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s, r) = unbounded::<i32>();
 ///
@@ -834,7 +834,7 @@ impl<'a, T> fmt::Debug for TryIter<'a, T> {
 ///
 /// ```
 /// use std::thread;
-/// use crossbeam_channel::unbounded;
+/// use new_mpsc::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
