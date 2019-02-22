@@ -3,9 +3,8 @@
 use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use std::sync::atomic;
+use std::sync::atomic::{self, AtomicBool, Ordering};
+use std::thread;
 
 const SPIN_LIMIT: u32 = 6;
 const YIELD_LIMIT: u32 = 10;
@@ -62,13 +61,7 @@ impl Backoff {
                 atomic::spin_loop_hint();
             }
         } else {
-            #[cfg(not(feature = "std"))]
-            for _ in 0..1 << self.step.get() {
-                atomic::spin_loop_hint();
-            }
-
-            #[cfg(feature = "std")]
-            ::std::thread::yield_now();
+            thread::yield_now();
         }
 
         if self.step.get() <= YIELD_LIMIT {
