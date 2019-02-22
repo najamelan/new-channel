@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
+use notify::{Context, Operation, Selected, Token, Waker};
 use utils::{Backoff, Mutex};
-use notify::{Context, Operation, Selected, Waker, Token};
 
 /// A pointer to a packet.
 pub type ZeroToken = usize;

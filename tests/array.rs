@@ -1,7 +1,7 @@
 //! Tests for the array channel flavor.
 
-extern crate crossbeam_channel;
 extern crate crossbeam_utils;
+extern crate new_mpsc;
 extern crate rand;
 
 use std::sync::atomic::AtomicUsize;
@@ -9,10 +9,10 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use crossbeam_channel::bounded;
-use crossbeam_channel::{RecvError, RecvTimeoutError, TryRecvError};
-use crossbeam_channel::{SendError, SendTimeoutError, TrySendError};
 use crossbeam_utils::thread::scope;
+use new_mpsc::bounded;
+use new_mpsc::{RecvError, RecvTimeoutError, TryRecvError};
+use new_mpsc::{SendError, SendTimeoutError, TrySendError};
 use rand::{thread_rng, Rng};
 
 fn ms(ms: u64) -> Duration {
@@ -30,15 +30,6 @@ fn smoke() {
 
     assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
     assert_eq!(r.recv_timeout(ms(1000)), Err(RecvTimeoutError::Timeout));
-}
-
-#[test]
-fn capacity() {
-    for i in 1..10 {
-        let (s, r) = bounded::<()>(i);
-        assert_eq!(s.capacity(), Some(i));
-        assert_eq!(r.capacity(), Some(i));
-    }
 }
 
 #[test]

@@ -1,8 +1,8 @@
 //! Waking mechanism for threads blocked on channel operations.
 
 use std::cell::Cell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread::{self, Thread, ThreadId};
 use std::time::Instant;
 

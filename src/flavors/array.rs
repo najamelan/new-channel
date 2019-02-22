@@ -21,8 +21,8 @@ use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
-use utils::{Backoff, CachePadded};
 use notify::{Context, Operation, Selected, SyncWaker, Token};
+use utils::{Backoff, CachePadded};
 
 /// A slot in a channel.
 struct Slot<T> {
@@ -343,15 +343,18 @@ impl<T> Channel<T> {
     }
 
     /// Sends a message into the channel.
-    pub fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
+    pub fn send(&self, mut msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
         let token = &mut Token::default();
         loop {
             // Try sending a message several times.
             let backoff = Backoff::new();
             loop {
-                if self.start_send(token) {
-                    let res = unsafe { self.write(token, msg) };
-                    return res.map_err(SendTimeoutError::Disconnected);
+                match self.try_send(msg) {
+                    Ok(()) => return Ok(()),
+                    Err(TrySendError::Disconnected(m)) => {
+                        return Err(SendTimeoutError::Disconnected(m));
+                    }
+                    Err(TrySendError::Full(m)) => msg = m,
                 }
 
                 if backoff.is_completed() {

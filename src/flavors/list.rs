@@ -8,8 +8,8 @@ use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
-use utils::{Backoff, CachePadded};
 use notify::{Context, Operation, Selected, SyncWaker, Token};
+use utils::{Backoff, CachePadded};
 
 // Bits indicating the state of a slot:
 // * If a message has been written into the slot, `WRITE` is set.
@@ -250,7 +250,7 @@ impl<T> Channel<T> {
 
                     // Wake a sleeping receiver.
                     self.receivers.notify();
-                    return Ok(())
+                    return Ok(());
                 },
                 Err(t) => {
                     tail = t;

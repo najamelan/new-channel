@@ -20,7 +20,7 @@
 //!   - https://github.com/rust-lang/rust/blob/master/COPYRIGHT
 //!   - https://www.rust-lang.org/en-US/legal.html
 
-extern crate crossbeam_channel as cc;
+extern crate new_mpsc;
 
 use std::sync::mpsc::{RecvError, RecvTimeoutError, TryRecvError};
 use std::sync::mpsc::{SendError, TrySendError};
@@ -28,12 +28,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub struct Sender<T> {
-    pub inner: cc::Sender<T>,
+    pub inner: new_mpsc::Sender<T>,
 }
 
 impl<T> Sender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
-        self.inner.send(t).map_err(|cc::SendError(m)| SendError(m))
+        self.inner.send(t).map_err(|new_mpsc::SendError(m)| SendError(m))
     }
 }
 
@@ -46,18 +46,18 @@ impl<T> Clone for Sender<T> {
 }
 
 pub struct SyncSender<T> {
-    pub inner: cc::Sender<T>,
+    pub inner: new_mpsc::Sender<T>,
 }
 
 impl<T> SyncSender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
-        self.inner.send(t).map_err(|cc::SendError(m)| SendError(m))
+        self.inner.send(t).map_err(|new_mpsc::SendError(m)| SendError(m))
     }
 
     pub fn try_send(&self, t: T) -> Result<(), TrySendError<T>> {
         self.inner.try_send(t).map_err(|err| match err {
-            cc::TrySendError::Full(m) => TrySendError::Full(m),
-            cc::TrySendError::Disconnected(m) => TrySendError::Disconnected(m),
+            new_mpsc::TrySendError::Full(m) => TrySendError::Full(m),
+            new_mpsc::TrySendError::Disconnected(m) => TrySendError::Disconnected(m),
         })
     }
 }
@@ -71,14 +71,14 @@ impl<T> Clone for SyncSender<T> {
 }
 
 pub struct Receiver<T> {
-    pub inner: cc::Receiver<T>,
+    pub inner: new_mpsc::Receiver<T>,
 }
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.inner.try_recv().map_err(|err| match err {
-            cc::TryRecvError::Empty => TryRecvError::Empty,
-            cc::TryRecvError::Disconnected => TryRecvError::Disconnected,
+            new_mpsc::TryRecvError::Empty => TryRecvError::Empty,
+            new_mpsc::TryRecvError::Disconnected => TryRecvError::Disconnected,
         })
     }
 
@@ -88,8 +88,8 @@ impl<T> Receiver<T> {
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         self.inner.recv_timeout(timeout).map_err(|err| match err {
-            cc::RecvTimeoutError::Timeout => RecvTimeoutError::Timeout,
-            cc::RecvTimeoutError::Disconnected => RecvTimeoutError::Disconnected,
+            new_mpsc::RecvTimeoutError::Timeout => RecvTimeoutError::Timeout,
+            new_mpsc::RecvTimeoutError::Disconnected => RecvTimeoutError::Disconnected,
         })
     }
 
@@ -157,14 +157,14 @@ impl<T> Iterator for IntoIter<T> {
 }
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
-    let (s, r) = cc::unbounded();
+    let (s, r) = new_mpsc::unbounded();
     let s = Sender { inner: s };
     let r = Receiver { inner: r };
     (s, r)
 }
 
 pub fn sync_channel<T>(bound: usize) -> (SyncSender<T>, Receiver<T>) {
-    let (s, r) = cc::bounded(bound);
+    let (s, r) = new_mpsc::bounded(bound);
     let s = SyncSender { inner: s };
     let r = Receiver { inner: r };
     (s, r)
