@@ -110,23 +110,8 @@ struct Position<T> {
 }
 
 /// The token type for the list flavor.
-pub struct ListToken {
-    /// The block of slots.
-    block: *const u8,
-
-    /// The offset into the block.
-    offset: usize,
-}
-
-impl Default for ListToken {
-    #[inline]
-    fn default() -> Self {
-        ListToken {
-            block: ptr::null(),
-            offset: 0,
-        }
-    }
-}
+#[derive(Default)]
+pub struct ListToken;
 
 /// Unbounded channel implemented as a linked list.
 ///

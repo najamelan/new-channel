@@ -16,6 +16,7 @@
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem;
+use std::process;
 use std::ptr;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -34,23 +35,8 @@ struct Slot<T> {
 }
 
 /// The token type for the array flavor.
-pub struct ArrayToken {
-    /// Slot to read from or write to.
-    slot: *const u8,
-
-    /// Stamp to store into the slot after reading or writing.
-    stamp: usize,
-}
-
-impl Default for ArrayToken {
-    #[inline]
-    fn default() -> Self {
-        ArrayToken {
-            slot: ptr::null(),
-            stamp: 0,
-        }
-    }
-}
+#[derive(Default)]
+pub struct ArrayToken;
 
 /// Bounded channel based on a preallocated array.
 pub struct Channel<T> {
@@ -103,16 +89,20 @@ impl<T> Channel<T> {
     pub fn with_capacity(cap: usize) -> Self {
         assert!(cap > 0, "capacity must be positive");
 
-        // Make sure there are at least two most significant bits: one to encode laps and one more
-        // to indicate that the channel is disconnected. If we can't reserve two bits, then panic.
-        // In that case, the buffer is likely too large to allocate anyway.
-        let cap_limit = usize::max_value() / 4;
-        assert!(
-            cap <= cap_limit,
-            "channel capacity is too large: {} > {}",
-            cap,
-            cap_limit
-        );
+        // Head and tail indices must have at least two most significant bits reserved: one to
+        // encode laps and one more to indicate that the channel is disconnected. However, note
+        // that if `cap > usize::max_value() / 4`, then buffer allocation should fail anyway. Since
+        // every slot contains an `AtomicUsize`, we cannot allocate extremely large buffers even
+        // when `T` is a zero-sized type.
+        //
+        // We could in theory overshoot that limit on 8-bit and 16-bit platforms provided they have
+        // `libstd` in the first place, `size_of::<T>() <= 1`, the capacity is unreasonably large,
+        // and the allocator managed to make such a large allocation in such a constrained
+        // environment. It is unlikely all of that will ever be true. But, as a pedantic safety
+        // measure, we make a check anyway and abort if it doesn't pass.
+        if cap > usize::max_value() / 4 {
+            process::abort();
+        }
 
         // Compute constants `mark_bit` and `one_lap`.
         let mark_bit = (cap + 1).next_power_of_two();
@@ -153,17 +143,15 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Attempts to reserve a slot for sending a message.
-    fn start_send(&self, token: &mut Token) -> bool {
+    /// Attempts to send a message into the channel.
+    pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         let backoff = Backoff::new();
         let mut tail = self.tail.load(Ordering::Relaxed);
 
         loop {
             // Check if the channel is disconnected.
             if tail & self.mark_bit != 0 {
-                token.array.slot = ptr::null();
-                token.array.stamp = 0;
-                return true;
+                return Err(TrySendError::Disconnected(msg));
             }
 
             // Deconstruct the tail.
@@ -194,10 +182,13 @@ impl<T> Channel<T> {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
-                        // Prepare the token for the follow-up call to `write`.
-                        token.array.slot = slot as *const Slot<T> as *const u8;
-                        token.array.stamp = tail + 1;
-                        return true;
+                        // Write the message into the slot and update the stamp.
+                        unsafe { slot.msg.get().write(msg); }
+                        slot.stamp.store(tail + 1, Ordering::Release);
+
+                        // Wake a sleeping receiver.
+                        self.receivers.notify();
+                        return Ok(());
                     }
                     Err(t) => {
                         tail = t;
@@ -211,7 +202,7 @@ impl<T> Channel<T> {
                 // If the head lags one lap behind the tail as well...
                 if head.wrapping_add(self.one_lap) == tail {
                     // ...then the channel is full.
-                    return false;
+                    return Err(TrySendError::Full(msg));
                 }
 
                 backoff.spin();
@@ -221,124 +212,6 @@ impl<T> Channel<T> {
                 backoff.snooze();
                 tail = self.tail.load(Ordering::Relaxed);
             }
-        }
-    }
-
-    /// Writes a message into the channel.
-    pub unsafe fn write(&self, token: &mut Token, msg: T) -> Result<(), T> {
-        // If there is no slot, the channel is disconnected.
-        if token.array.slot.is_null() {
-            return Err(msg);
-        }
-
-        let slot: &Slot<T> = &*(token.array.slot as *const Slot<T>);
-
-        // Write the message into the slot and update the stamp.
-        slot.msg.get().write(msg);
-        slot.stamp.store(token.array.stamp, Ordering::Release);
-
-        // Wake a sleeping receiver.
-        self.receivers.notify();
-        Ok(())
-    }
-
-    /// Attempts to reserve a slot for receiving a message.
-    fn start_recv(&self, token: &mut Token) -> bool {
-        let backoff = Backoff::new();
-        let mut head = self.head.load(Ordering::Relaxed);
-
-        loop {
-            // Deconstruct the head.
-            let index = head & (self.mark_bit - 1);
-            let lap = head & !(self.one_lap - 1);
-
-            // Inspect the corresponding slot.
-            let slot = unsafe { &*self.buffer.add(index) };
-            let stamp = slot.stamp.load(Ordering::Acquire);
-
-            // If the the stamp is ahead of the head by 1, we may attempt to pop.
-            if head + 1 == stamp {
-                let new = if index + 1 < self.cap {
-                    // Same lap, incremented index.
-                    // Set to `{ lap: lap, mark: 0, index: index + 1 }`.
-                    head + 1
-                } else {
-                    // One lap forward, index wraps around to zero.
-                    // Set to `{ lap: lap.wrapping_add(1), mark: 0, index: 0 }`.
-                    lap.wrapping_add(self.one_lap)
-                };
-
-                // Try moving the head.
-                match self.head.compare_exchange_weak(
-                    head,
-                    new,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        // Prepare the token for the follow-up call to `read`.
-                        token.array.slot = slot as *const Slot<T> as *const u8;
-                        token.array.stamp = head.wrapping_add(self.one_lap);
-                        return true;
-                    }
-                    Err(h) => {
-                        head = h;
-                        backoff.spin();
-                    }
-                }
-            } else if stamp == head {
-                atomic::fence(Ordering::SeqCst);
-                let tail = self.tail.load(Ordering::Relaxed);
-
-                // If the tail equals the head, that means the channel is empty.
-                if (tail & !self.mark_bit) == head {
-                    // If the channel is disconnected...
-                    if tail & self.mark_bit != 0 {
-                        // ...then receive an error.
-                        token.array.slot = ptr::null();
-                        token.array.stamp = 0;
-                        return true;
-                    } else {
-                        // Otherwise, the receive operation is not ready.
-                        return false;
-                    }
-                }
-
-                backoff.spin();
-                head = self.head.load(Ordering::Relaxed);
-            } else {
-                // Snooze because we need to wait for the stamp to get updated.
-                backoff.snooze();
-                head = self.head.load(Ordering::Relaxed);
-            }
-        }
-    }
-
-    /// Reads a message from the channel.
-    pub unsafe fn read(&self, token: &mut Token) -> Result<T, ()> {
-        if token.array.slot.is_null() {
-            // The channel is disconnected.
-            return Err(());
-        }
-
-        let slot: &Slot<T> = &*(token.array.slot as *const Slot<T>);
-
-        // Read the message from the slot and update the stamp.
-        let msg = slot.msg.get().read();
-        slot.stamp.store(token.array.stamp, Ordering::Release);
-
-        // Wake a sleeping sender.
-        self.senders.notify();
-        Ok(msg)
-    }
-
-    /// Attempts to send a message into the channel.
-    pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        let token = &mut Token::default();
-        if self.start_send(token) {
-            unsafe { self.write(token, msg).map_err(TrySendError::Disconnected) }
-        } else {
-            Err(TrySendError::Full(msg))
         }
     }
 
@@ -396,12 +269,72 @@ impl<T> Channel<T> {
 
     /// Attempts to receive a message without blocking.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        let token = &mut Token::default();
+        let backoff = Backoff::new();
+        let mut head = self.head.load(Ordering::Relaxed);
 
-        if self.start_recv(token) {
-            unsafe { self.read(token).map_err(|_| TryRecvError::Disconnected) }
-        } else {
-            Err(TryRecvError::Empty)
+        loop {
+            // Deconstruct the head.
+            let index = head & (self.mark_bit - 1);
+            let lap = head & !(self.one_lap - 1);
+
+            // Inspect the corresponding slot.
+            let slot = unsafe { &*self.buffer.add(index) };
+            let stamp = slot.stamp.load(Ordering::Acquire);
+
+            // If the the stamp is ahead of the head by 1, we may attempt to pop.
+            if head + 1 == stamp {
+                let new = if index + 1 < self.cap {
+                    // Same lap, incremented index.
+                    // Set to `{ lap: lap, mark: 0, index: index + 1 }`.
+                    head + 1
+                } else {
+                    // One lap forward, index wraps around to zero.
+                    // Set to `{ lap: lap.wrapping_add(1), mark: 0, index: 0 }`.
+                    lap.wrapping_add(self.one_lap)
+                };
+
+                // Try moving the head.
+                match self.head.compare_exchange_weak(
+                    head,
+                    new,
+                    Ordering::SeqCst,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        // Read the message from the slot and update the stamp.
+                        let msg = unsafe { slot.msg.get().read() };
+                        slot.stamp.store(head.wrapping_add(self.one_lap), Ordering::Release);
+
+                        // Wake a sleeping sender.
+                        self.senders.notify();
+                        return Ok(msg);
+                    }
+                    Err(h) => {
+                        head = h;
+                        backoff.spin();
+                    }
+                }
+            } else if stamp == head {
+                atomic::fence(Ordering::SeqCst);
+                let tail = self.tail.load(Ordering::Relaxed);
+
+                // If the tail equals the head, that means the channel is empty.
+                if (tail & !self.mark_bit) == head {
+                    // If the channel is disconnected...
+                    if tail & self.mark_bit != 0 {
+                        return Err(TryRecvError::Disconnected);
+                    } else {
+                        return Err(TryRecvError::Empty);
+                    }
+                }
+
+                backoff.spin();
+                head = self.head.load(Ordering::Relaxed);
+            } else {
+                // Snooze because we need to wait for the stamp to get updated.
+                backoff.snooze();
+                head = self.head.load(Ordering::Relaxed);
+            }
         }
     }
 
@@ -412,9 +345,10 @@ impl<T> Channel<T> {
             // Try receiving a message several times.
             let backoff = Backoff::new();
             loop {
-                if self.start_recv(token) {
-                    let res = unsafe { self.read(token) };
-                    return res.map_err(|_| RecvTimeoutError::Disconnected);
+                match self.try_recv() {
+                    Ok(msg) => return Ok(msg),
+                    Err(TryRecvError::Disconnected) => return Err(RecvTimeoutError::Disconnected),
+                    Err(TryRecvError::Empty) => {}
                 }
 
                 if backoff.is_completed() {
