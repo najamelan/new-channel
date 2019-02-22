@@ -163,7 +163,9 @@ impl<T> Channel<T> {
                 ) {
                     Ok(_) => {
                         // Write the message into the slot and update the stamp.
-                        unsafe { slot.msg.get().write(msg); }
+                        unsafe {
+                            slot.msg.get().write(msg);
+                        }
                         slot.stamp.store(tail + 1, Ordering::Release);
 
                         // Wake a sleeping receiver.
@@ -283,7 +285,8 @@ impl<T> Channel<T> {
                     Ok(_) => {
                         // Read the message from the slot and update the stamp.
                         let msg = unsafe { slot.msg.get().read() };
-                        slot.stamp.store(head.wrapping_add(self.one_lap), Ordering::Release);
+                        slot.stamp
+                            .store(head.wrapping_add(self.one_lap), Ordering::Release);
 
                         // Wake a sleeping sender.
                         self.senders.notify();

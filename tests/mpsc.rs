@@ -33,7 +33,9 @@ pub struct Sender<T> {
 
 impl<T> Sender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
-        self.inner.send(t).map_err(|new_mpsc::SendError(m)| SendError(m))
+        self.inner
+            .send(t)
+            .map_err(|new_mpsc::SendError(m)| SendError(m))
     }
 }
 
@@ -51,7 +53,9 @@ pub struct SyncSender<T> {
 
 impl<T> SyncSender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
-        self.inner.send(t).map_err(|new_mpsc::SendError(m)| SendError(m))
+        self.inner
+            .send(t)
+            .map_err(|new_mpsc::SendError(m)| SendError(m))
     }
 
     pub fn try_send(&self, t: T) -> Result<(), TrySendError<T>> {
