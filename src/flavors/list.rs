@@ -410,11 +410,6 @@ impl<T> Channel<T> {
         let tail = self.tail.index.load(Ordering::SeqCst);
         head >> SHIFT == tail >> SHIFT
     }
-
-    /// Returns `true` if the channel is full.
-    pub fn is_full(&self) -> bool {
-        false
-    }
 }
 
 impl<T> Drop for Channel<T> {

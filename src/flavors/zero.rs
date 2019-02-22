@@ -159,7 +159,6 @@ impl<T> Channel<T> {
             inner
                 .senders
                 .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
-            inner.receivers.notify();
             drop(inner);
 
             // Block the current thread.
@@ -228,7 +227,6 @@ impl<T> Channel<T> {
             inner
                 .receivers
                 .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
-            inner.senders.notify();
             drop(inner);
 
             // Block the current thread.

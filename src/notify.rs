@@ -97,9 +97,6 @@ pub struct Entry {
 pub struct Waker {
     /// A list of select operations.
     selectors: Vec<Entry>,
-
-    /// A list of operations waiting to be ready.
-    observers: Vec<Entry>,
 }
 
 impl Waker {
@@ -108,7 +105,6 @@ impl Waker {
     pub fn new() -> Self {
         Waker {
             selectors: Vec::new(),
-            observers: Vec::new(),
         }
     }
 
@@ -177,16 +173,6 @@ impl Waker {
         entry
     }
 
-    /// Notifies all operations waiting to be ready.
-    #[inline]
-    pub fn notify(&mut self) {
-        for entry in self.observers.drain(..) {
-            if entry.cx.try_select(Selected::Operation(entry.oper)).is_ok() {
-                entry.cx.unpark();
-            }
-        }
-    }
-
     /// Notifies all registered operations that the channel is disconnected.
     #[inline]
     pub fn disconnect(&mut self) {
@@ -200,8 +186,6 @@ impl Waker {
                 entry.cx.unpark();
             }
         }
-
-        self.notify();
     }
 }
 
@@ -209,7 +193,6 @@ impl Drop for Waker {
     #[inline]
     fn drop(&mut self) {
         debug_assert_eq!(self.selectors.len(), 0);
-        debug_assert_eq!(self.observers.len(), 0);
     }
 }
 
@@ -240,7 +223,7 @@ impl SyncWaker {
         let mut inner = self.inner.lock();
         inner.register(oper, cx);
         self.is_empty.store(
-            inner.selectors.is_empty() && inner.observers.is_empty(),
+            inner.selectors.is_empty(),
             Ordering::SeqCst,
         );
     }
@@ -251,7 +234,7 @@ impl SyncWaker {
         let mut inner = self.inner.lock();
         let entry = inner.unregister(oper);
         self.is_empty.store(
-            inner.selectors.is_empty() && inner.observers.is_empty(),
+            inner.selectors.is_empty(),
             Ordering::SeqCst,
         );
         entry
@@ -263,9 +246,8 @@ impl SyncWaker {
         if !self.is_empty.load(Ordering::SeqCst) {
             let mut inner = self.inner.lock();
             inner.try_select();
-            inner.notify();
             self.is_empty.store(
-                inner.selectors.is_empty() && inner.observers.is_empty(),
+                inner.selectors.is_empty(),
                 Ordering::SeqCst,
             );
         }
@@ -277,7 +259,7 @@ impl SyncWaker {
         let mut inner = self.inner.lock();
         inner.disconnect();
         self.is_empty.store(
-            inner.selectors.is_empty() && inner.observers.is_empty(),
+            inner.selectors.is_empty(),
             Ordering::SeqCst,
         );
     }
