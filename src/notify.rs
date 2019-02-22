@@ -15,8 +15,6 @@ use utils::{Backoff, Mutex};
 /// Each field contains data associated with a specific channel flavor.
 #[derive(Default)]
 pub struct Token {
-    pub array: flavors::array::ArrayToken,
-    pub list: flavors::list::ListToken,
     pub zero: flavors::zero::ZeroToken,
 }
 

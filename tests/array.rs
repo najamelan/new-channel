@@ -33,45 +33,6 @@ fn smoke() {
 }
 
 #[test]
-fn len_empty_full() {
-    let (s, r) = bounded(2);
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), false);
-
-    s.send(()).unwrap();
-
-    assert_eq!(s.len(), 1);
-    assert_eq!(s.is_empty(), false);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 1);
-    assert_eq!(r.is_empty(), false);
-    assert_eq!(r.is_full(), false);
-
-    s.send(()).unwrap();
-
-    assert_eq!(s.len(), 2);
-    assert_eq!(s.is_empty(), false);
-    assert_eq!(s.is_full(), true);
-    assert_eq!(r.len(), 2);
-    assert_eq!(r.is_empty(), false);
-    assert_eq!(r.is_full(), true);
-
-    r.recv().unwrap();
-
-    assert_eq!(s.len(), 1);
-    assert_eq!(s.is_empty(), false);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 1);
-    assert_eq!(r.is_empty(), false);
-    assert_eq!(r.is_full(), false);
-}
-
-#[test]
 fn try_recv() {
     let (s, r) = bounded(100);
 
@@ -242,66 +203,6 @@ fn recv_after_disconnect() {
     assert_eq!(r.recv(), Ok(2));
     assert_eq!(r.recv(), Ok(3));
     assert_eq!(r.recv(), Err(RecvError));
-}
-
-#[test]
-fn len() {
-    const COUNT: usize = 25_000;
-    const CAP: usize = 1000;
-
-    let (s, r) = bounded(CAP);
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
-
-    for _ in 0..CAP / 10 {
-        for i in 0..50 {
-            s.send(i).unwrap();
-            assert_eq!(s.len(), i + 1);
-        }
-
-        for i in 0..50 {
-            r.recv().unwrap();
-            assert_eq!(r.len(), 50 - i - 1);
-        }
-    }
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
-
-    for i in 0..CAP {
-        s.send(i).unwrap();
-        assert_eq!(s.len(), i + 1);
-    }
-
-    for _ in 0..CAP {
-        r.recv().unwrap();
-    }
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..COUNT {
-                assert_eq!(r.recv(), Ok(i));
-                let len = r.len();
-                assert!(len <= CAP);
-            }
-        });
-
-        scope.spawn(|_| {
-            for i in 0..COUNT {
-                s.send(i).unwrap();
-                let len = s.len();
-                assert!(len <= CAP);
-            }
-        });
-    })
-    .unwrap();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
 }
 
 #[test]

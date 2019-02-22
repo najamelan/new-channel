@@ -27,31 +27,6 @@ fn smoke() {
 }
 
 #[test]
-fn len_empty_full() {
-    let (s, r) = bounded(0);
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), true);
-    assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), true);
-
-    scope(|scope| {
-        scope.spawn(|_| s.send(0).unwrap());
-        scope.spawn(|_| r.recv().unwrap());
-    })
-    .unwrap();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), true);
-    assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), true);
-}
-
-#[test]
 fn try_recv() {
     let (s, r) = bounded(0);
 
@@ -179,36 +154,6 @@ fn send_timeout() {
         });
     })
     .unwrap();
-}
-
-#[test]
-fn len() {
-    const COUNT: usize = 25_000;
-
-    let (s, r) = bounded(0);
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..COUNT {
-                assert_eq!(r.recv(), Ok(i));
-                assert_eq!(r.len(), 0);
-            }
-        });
-
-        scope.spawn(|_| {
-            for i in 0..COUNT {
-                s.send(i).unwrap();
-                assert_eq!(s.len(), 0);
-            }
-        });
-    })
-    .unwrap();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
 }
 
 #[test]

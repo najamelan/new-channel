@@ -16,9 +16,6 @@ pub type ZeroToken = usize;
 
 /// A slot for passing one message from a sender to a receiver.
 struct Packet<T> {
-    /// Equals `true` if the packet is allocated on the stack.
-    on_stack: bool,
-
     /// Equals `true` once the packet is ready for reading or writing.
     ready: AtomicBool,
 
@@ -28,18 +25,16 @@ struct Packet<T> {
 
 impl<T> Packet<T> {
     /// Creates an empty packet on the stack.
-    fn empty_on_stack() -> Packet<T> {
+    fn empty() -> Packet<T> {
         Packet {
-            on_stack: true,
             ready: AtomicBool::new(false),
             msg: UnsafeCell::new(None),
         }
     }
 
     /// Creates a packet on the stack, containing a message.
-    fn message_on_stack(msg: T) -> Packet<T> {
+    fn new(msg: T) -> Packet<T> {
         Packet {
-            on_stack: true,
             ready: AtomicBool::new(false),
             msg: UnsafeCell::new(Some(msg)),
         }
@@ -110,21 +105,12 @@ impl<T> Channel<T> {
 
         let packet = &*(token.zero as *const Packet<T>);
 
-        if packet.on_stack {
-            // The message has been in the packet from the beginning, so there is no need to wait
-            // for it. However, after reading the message, we need to set `ready` to `true` in
-            // order to signal that the packet can be destroyed.
-            let msg = packet.msg.get().replace(None).unwrap();
-            packet.ready.store(true, Ordering::Release);
-            Ok(msg)
-        } else {
-            // Wait until the message becomes available, then read it and destroy the
-            // heap-allocated packet.
-            packet.wait_ready();
-            let msg = packet.msg.get().replace(None).unwrap();
-            drop(Box::from_raw(packet as *const Packet<T> as *mut Packet<T>));
-            Ok(msg)
-        }
+        // The message has been in the packet from the beginning, so there is no need to wait
+        // for it. However, after reading the message, we need to set `ready` to `true` in
+        // order to signal that the packet can be destroyed.
+        let msg = packet.msg.get().replace(None).unwrap();
+        packet.ready.store(true, Ordering::Release);
+        Ok(msg)
     }
 
     /// Attempts to send a message into the channel.
@@ -169,7 +155,7 @@ impl<T> Channel<T> {
         Context::with(|cx| {
             // Prepare for blocking until a receiver wakes us up.
             let oper = Operation::hook(token);
-            let packet = Packet::<T>::message_on_stack(msg);
+            let packet = Packet::<T>::new(msg);
             inner
                 .senders
                 .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
@@ -238,7 +224,7 @@ impl<T> Channel<T> {
         Context::with(|cx| {
             // Prepare for blocking until a sender wakes us up.
             let oper = Operation::hook(token);
-            let packet = Packet::<T>::empty_on_stack();
+            let packet = Packet::<T>::empty();
             inner
                 .receivers
                 .register_with_packet(oper, &packet as *const Packet<T> as usize, cx);
@@ -276,20 +262,5 @@ impl<T> Channel<T> {
             inner.senders.disconnect();
             inner.receivers.disconnect();
         }
-    }
-
-    /// Returns the current number of messages inside the channel.
-    pub fn len(&self) -> usize {
-        0
-    }
-
-    /// Returns `true` if the channel is empty.
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-
-    /// Returns `true` if the channel is full.
-    pub fn is_full(&self) -> bool {
-        true
     }
 }

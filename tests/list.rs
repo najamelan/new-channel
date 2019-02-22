@@ -33,36 +33,6 @@ fn smoke() {
 }
 
 #[test]
-fn len_empty_full() {
-    let (s, r) = unbounded();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), false);
-
-    s.send(()).unwrap();
-
-    assert_eq!(s.len(), 1);
-    assert_eq!(s.is_empty(), false);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 1);
-    assert_eq!(r.is_empty(), false);
-    assert_eq!(r.is_full(), false);
-
-    r.recv().unwrap();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(s.is_empty(), true);
-    assert_eq!(s.is_full(), false);
-    assert_eq!(r.len(), 0);
-    assert_eq!(r.is_empty(), true);
-    assert_eq!(r.is_full(), false);
-}
-
-#[test]
 fn try_recv() {
     let (s, r) = unbounded();
 
@@ -194,27 +164,6 @@ fn recv_after_disconnect() {
     assert_eq!(r.recv(), Ok(2));
     assert_eq!(r.recv(), Ok(3));
     assert_eq!(r.recv(), Err(RecvError));
-}
-
-#[test]
-fn len() {
-    let (s, r) = unbounded();
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
-
-    for i in 0..50 {
-        s.send(i).unwrap();
-        assert_eq!(s.len(), i + 1);
-    }
-
-    for i in 0..50 {
-        r.recv().unwrap();
-        assert_eq!(r.len(), 50 - i - 1);
-    }
-
-    assert_eq!(s.len(), 0);
-    assert_eq!(r.len(), 0);
 }
 
 #[test]

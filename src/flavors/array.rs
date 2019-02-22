@@ -16,7 +16,6 @@
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem;
-use std::process;
 use std::ptr;
 use std::sync::atomic::{self, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -33,10 +32,6 @@ struct Slot<T> {
     /// The message in this slot.
     msg: UnsafeCell<T>,
 }
-
-/// The token type for the array flavor.
-#[derive(Default)]
-pub struct ArrayToken;
 
 /// Bounded channel based on a preallocated array.
 pub struct Channel<T> {
@@ -88,21 +83,6 @@ impl<T> Channel<T> {
     /// Panics if the capacity is not in the range `1 ..= usize::max_value() / 4`.
     pub fn with_capacity(cap: usize) -> Self {
         assert!(cap > 0, "capacity must be positive");
-
-        // Head and tail indices must have at least two most significant bits reserved: one to
-        // encode laps and one more to indicate that the channel is disconnected. However, note
-        // that if `cap > usize::max_value() / 4`, then buffer allocation should fail anyway. Since
-        // every slot contains an `AtomicUsize`, we cannot allocate extremely large buffers even
-        // when `T` is a zero-sized type.
-        //
-        // We could in theory overshoot that limit on 8-bit and 16-bit platforms provided they have
-        // `libstd` in the first place, `size_of::<T>() <= 1`, the capacity is unreasonably large,
-        // and the allocator managed to make such a large allocation in such a constrained
-        // environment. It is unlikely all of that will ever be true. But, as a pedantic safety
-        // measure, we make a check anyway and abort if it doesn't pass.
-        if cap > usize::max_value() / 4 {
-            process::abort();
-        }
 
         // Compute constants `mark_bit` and `one_lap`.
         let mark_bit = (cap + 1).next_power_of_two();
@@ -390,31 +370,6 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Returns the current number of messages inside the channel.
-    pub fn len(&self) -> usize {
-        loop {
-            // Load the tail, then load the head.
-            let tail = self.tail.load(Ordering::SeqCst);
-            let head = self.head.load(Ordering::SeqCst);
-
-            // If the tail didn't change, we've got consistent values to work with.
-            if self.tail.load(Ordering::SeqCst) == tail {
-                let hix = head & (self.mark_bit - 1);
-                let tix = tail & (self.mark_bit - 1);
-
-                return if hix < tix {
-                    tix - hix
-                } else if hix > tix {
-                    self.cap - hix + tix
-                } else if (tail & !self.mark_bit) == head {
-                    0
-                } else {
-                    self.cap
-                };
-            }
-        }
-    }
-
     /// Disconnects the channel and wakes up all blocked receivers.
     pub fn disconnect(&self) {
         let tail = self.tail.fetch_or(self.mark_bit, Ordering::SeqCst);
@@ -457,11 +412,25 @@ impl<T> Channel<T> {
 
 impl<T> Drop for Channel<T> {
     fn drop(&mut self) {
-        // Get the index of the head.
-        let hix = self.head.load(Ordering::Relaxed) & (self.mark_bit - 1);
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Relaxed);
+
+        let hix = head & (self.mark_bit - 1);
+        let tix = tail & (self.mark_bit - 1);
+
+        // Calculate the number of messages in the channel.
+        let len = if hix < tix {
+            tix - hix
+        } else if hix > tix {
+            self.cap - hix + tix
+        } else if (tail & !self.mark_bit) == head {
+            0
+        } else {
+            self.cap
+        };
 
         // Loop over all slots that hold a message and drop them.
-        for i in 0..self.len() {
+        for i in 0..len {
             // Compute the index of the next slot holding a message.
             let index = if hix + i < self.cap {
                 hix + i
