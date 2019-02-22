@@ -11,9 +11,6 @@ use err::{RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError};
 use notify::{Context, Selected, Waker};
 use utils::{Backoff, Spinlock};
 
-/// A pointer to a packet.
-pub type ZeroToken = usize;
-
 /// A slot for passing one message from a sender to a receiver.
 struct Packet<T> {
     /// Equals `true` once the packet is ready for reading or writing.
@@ -84,26 +81,26 @@ impl<T> Channel<T> {
     }
 
     /// Writes a message into the packet.
-    pub unsafe fn write(&self, token: &mut ZeroToken, msg: T) -> Result<(), T> {
+    unsafe fn write(&self, packet: *const Packet<T>, msg: T) -> Result<(), T> {
         // If there is no packet, the channel is disconnected.
-        if *token == 0 {
+        if packet.is_null() {
             return Err(msg);
         }
 
-        let packet = &*(*token as *const Packet<T>);
+        let packet = &*packet;
         packet.msg.get().write(Some(msg));
         packet.ready.store(true, Ordering::Release);
         Ok(())
     }
 
     /// Reads a message from the packet.
-    pub unsafe fn read(&self, token: &mut ZeroToken) -> Result<T, ()> {
+    unsafe fn read(&self, packet: *const Packet<T>) -> Result<T, ()> {
         // If there is no packet, the channel is disconnected.
-        if *token == 0 {
+        if packet.is_null() {
             return Err(());
         }
 
-        let packet = &*(*token as *const Packet<T>);
+        let packet = &*packet;
 
         // The message has been in the packet from the beginning, so there is no need to wait
         // for it. However, after reading the message, we need to set `ready` to `true` in
@@ -115,15 +112,15 @@ impl<T> Channel<T> {
 
     /// Attempts to send a message into the channel.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting receiver, pair up with it.
         if let Some(operation) = inner.receivers.try_select() {
-            *token = operation.packet;
             drop(inner);
             unsafe {
-                self.write(token, msg).ok().unwrap();
+                self.write(operation.packet as *const Packet<T>, msg)
+                    .ok()
+                    .unwrap();
             }
             Ok(())
         } else if inner.is_disconnected {
@@ -135,15 +132,15 @@ impl<T> Channel<T> {
 
     /// Sends a message into the channel.
     pub fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
-        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting receiver, pair up with it.
         if let Some(operation) = inner.receivers.try_select() {
-            *token = operation.packet;
             drop(inner);
             unsafe {
-                self.write(token, msg).ok().unwrap();
+                self.write(operation.packet as *const Packet<T>, msg)
+                    .ok()
+                    .unwrap();
             }
             return Ok(());
         }
@@ -186,14 +183,15 @@ impl<T> Channel<T> {
 
     /// Attempts to receive a message without blocking.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting sender, pair up with it.
         if let Some(operation) = inner.senders.try_select() {
-            *token = operation.packet;
             drop(inner);
-            unsafe { self.read(token).map_err(|_| TryRecvError::Disconnected) }
+            unsafe {
+                self.read(operation.packet as *const Packet<T>)
+                    .map_err(|_| TryRecvError::Disconnected)
+            }
         } else if inner.is_disconnected {
             Err(TryRecvError::Disconnected)
         } else {
@@ -203,15 +201,15 @@ impl<T> Channel<T> {
 
     /// Receives a message from the channel.
     pub fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError> {
-        let token = &mut ZeroToken::default();
         let mut inner = self.inner.lock();
 
         // If there's a waiting sender, pair up with it.
         if let Some(operation) = inner.senders.try_select() {
-            *token = operation.packet;
             drop(inner);
             unsafe {
-                return self.read(token).map_err(|_| RecvTimeoutError::Disconnected);
+                return self
+                    .read(operation.packet as *const Packet<T>)
+                    .map_err(|_| RecvTimeoutError::Disconnected);
             }
         }
 
@@ -249,14 +247,19 @@ impl<T> Channel<T> {
         })
     }
 
-    /// Disconnects the channel and wakes up all blocked receivers.
-    pub fn disconnect(&self) {
+    /// Disconnects the channel and wakes up all blocked senders and receivers.
+    ///
+    /// Returns `true` if this call disconnected the channel.
+    pub fn disconnect(&self) -> bool {
         let mut inner = self.inner.lock();
 
         if !inner.is_disconnected {
             inner.is_disconnected = true;
             inner.senders.disconnect();
             inner.receivers.disconnect();
+            true
+        } else {
+            false
         }
     }
 }

@@ -8,6 +8,8 @@ use std::time::Instant;
 
 use utils::{Backoff, Spinlock};
 
+// TODO: look for all mentions of 'select' and remove them
+
 /// Current state of a select or a blocking operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Selected {
@@ -179,7 +181,7 @@ impl SyncWaker {
     pub fn new() -> Self {
         SyncWaker {
             inner: Spinlock::new(Waker::new()),
-            is_empty: AtomicBool::new(false),
+            is_empty: AtomicBool::new(true),
         }
     }
 

@@ -4,13 +4,14 @@ extern crate crossbeam_utils;
 extern crate new_mpsc;
 extern crate rand;
 
+use std::any::Any;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
 use crossbeam_utils::thread::scope;
-use new_mpsc::unbounded;
+use new_mpsc::{unbounded, Receiver};
 use new_mpsc::{RecvError, RecvTimeoutError, TryRecvError};
 use new_mpsc::{SendError, SendTimeoutError, TrySendError};
 use rand::{thread_rng, Rng};
@@ -380,6 +381,44 @@ fn linearizable() {
                 }
             });
         }
+    })
+    .unwrap();
+}
+
+#[test]
+fn channel_through_channel() {
+    const COUNT: usize = 1000;
+
+    type T = Box<Any + Send>;
+
+    let (s, r) = unbounded::<T>();
+
+    scope(|scope| {
+        scope.spawn(move |_| {
+            let mut s = s;
+
+            for _ in 0..COUNT {
+                let (new_s, new_r) = unbounded();
+                let mut new_r: T = Box::new(Some(new_r));
+
+                s.send(new_r).unwrap();
+                s = new_s;
+            }
+        });
+
+        scope.spawn(move |_| {
+            let mut r = r;
+
+            for _ in 0..COUNT {
+                r = r
+                    .recv()
+                    .unwrap()
+                    .downcast_mut::<Option<Receiver<T>>>()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+            }
+        });
     })
     .unwrap();
 }

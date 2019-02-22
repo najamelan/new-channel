@@ -1,24 +1,4 @@
 //! Tests copied from `std::sync::mpsc`.
-//!
-//! This is a copy of tests for the `std::sync::mpsc` channels from the standard library, but
-//! modified to work with `crossbeam-channel` instead.
-//!
-//! Minor tweaks were needed to make the tests compile:
-//!
-//! - Replace `box` syntax with `Box::new`.
-//! - Replace all uses of `Select` with `select!`. TODO
-//! - Change the imports.
-//! - Join all spawned threads.
-//! - Removed assertion from oneshot_multi_thread_send_close_stress tests.
-//!
-//! Source:
-//!   - https://github.com/rust-lang/rust/tree/master/src/libstd/sync/mpsc
-//!
-//! Copyright & License:
-//!   - Copyright 2013-2014 The Rust Project Developers
-//!   - Apache License, Version 2.0 or MIT license, at your option
-//!   - https://github.com/rust-lang/rust/blob/master/COPYRIGHT
-//!   - https://www.rust-lang.org/en-US/legal.html
 
 extern crate new_mpsc;
 
