@@ -9,6 +9,15 @@ use counter;
 use err::{RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError};
 use flavors;
 
+// TODO: unify try_send+send and try_recv+recv
+pub trait Channel<T> {
+    fn try_send(&self, msg: T) -> Result<(), TrySendError<T>>;
+    fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>>;
+    fn try_recv(&self) -> Result<T, TryRecvError>;
+    fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError>;
+    fn disconnect(&self) -> bool;
+}
+
 /// Creates a channel of unbounded capacity.
 ///
 /// This channel has a growable buffer that can hold any number of messages at a time.
@@ -38,12 +47,8 @@ use flavors;
 /// ```
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let (s, r) = counter::new(flavors::list::Channel::new());
-    let s = Sender {
-        flavor: SenderFlavor::List(s),
-    };
-    let r = Receiver {
-        flavor: ReceiverFlavor::List(r),
-    };
+    let s = Sender { inner: s };
+    let r = Receiver { inner: r };
     (s, r)
 }
 
@@ -100,21 +105,13 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     if cap == 0 {
         let (s, r) = counter::new(flavors::zero::Channel::new());
-        let s = Sender {
-            flavor: SenderFlavor::Zero(s),
-        };
-        let r = Receiver {
-            flavor: ReceiverFlavor::Zero(r),
-        };
+        let s = Sender { inner: s };
+        let r = Receiver { inner: r };
         (s, r)
     } else {
         let (s, r) = counter::new(flavors::array::Channel::with_capacity(cap));
-        let s = Sender {
-            flavor: SenderFlavor::Array(s),
-        };
-        let r = Receiver {
-            flavor: ReceiverFlavor::Array(r),
-        };
+        let s = Sender { inner: s };
+        let r = Receiver { inner: r };
         (s, r)
     }
 }
@@ -139,19 +136,7 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 /// assert_eq!(msg1 + msg2, 3);
 /// ```
 pub struct Sender<T> {
-    flavor: SenderFlavor<T>,
-}
-
-/// Sender flavors.
-enum SenderFlavor<T> {
-    /// Bounded channel based on a preallocated array.
-    Array(counter::Sender<flavors::array::Channel<T>>),
-
-    /// Unbounded channel implemented as a linked list.
-    List(counter::Sender<flavors::list::Channel<T>>),
-
-    /// Zero-capacity channel.
-    Zero(counter::Sender<flavors::zero::Channel<T>>),
+    inner: counter::Sender<T>,
 }
 
 unsafe impl<T: Send> Send for Sender<T> {}
@@ -183,11 +168,7 @@ impl<T> Sender<T> {
     /// assert_eq!(s.try_send(3), Err(TrySendError::Disconnected(3)));
     /// ```
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        match &self.flavor {
-            SenderFlavor::Array(chan) => chan.try_send(msg),
-            SenderFlavor::List(chan) => chan.try_send(msg),
-            SenderFlavor::Zero(chan) => chan.try_send(msg),
-        }
+        self.inner.try_send(msg)
     }
 
     /// Blocks the current thread until a message is sent or the channel is disconnected.
@@ -219,12 +200,7 @@ impl<T> Sender<T> {
     /// assert_eq!(s.send(3), Err(SendError(3)));
     /// ```
     pub fn send(&self, msg: T) -> Result<(), SendError<T>> {
-        match &self.flavor {
-            SenderFlavor::Array(chan) => chan.send(msg, None),
-            SenderFlavor::List(chan) => chan.send(msg, None),
-            SenderFlavor::Zero(chan) => chan.send(msg, None),
-        }
-        .map_err(|err| match err {
+        self.inner.send(msg, None).map_err(|err| match err {
             SendTimeoutError::Disconnected(msg) => SendError(msg),
             SendTimeoutError::Timeout(_) => unreachable!(),
         })
@@ -269,36 +245,23 @@ impl<T> Sender<T> {
     /// ```
     pub fn send_timeout(&self, msg: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
         let deadline = Instant::now() + timeout;
-
-        match &self.flavor {
-            SenderFlavor::Array(chan) => chan.send(msg, Some(deadline)),
-            SenderFlavor::List(chan) => chan.send(msg, Some(deadline)),
-            SenderFlavor::Zero(chan) => chan.send(msg, Some(deadline)),
-        }
+        self.inner.send(msg, Some(deadline))
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         unsafe {
-            match &self.flavor {
-                SenderFlavor::Array(chan) => chan.release(|c| c.disconnect()),
-                SenderFlavor::List(chan) => chan.release(|c| c.disconnect()),
-                SenderFlavor::Zero(chan) => chan.release(|c| c.disconnect()),
-            }
+            self.inner.release(|c| c.disconnect()) // TODO: we don't need the closure anymore
         }
     }
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let flavor = match &self.flavor {
-            SenderFlavor::Array(chan) => SenderFlavor::Array(chan.acquire()),
-            SenderFlavor::List(chan) => SenderFlavor::List(chan.acquire()),
-            SenderFlavor::Zero(chan) => SenderFlavor::Zero(chan.acquire()),
-        };
-
-        Sender { flavor }
+        Sender {
+            inner: self.inner.acquire(),
+        }
     }
 }
 
@@ -329,19 +292,7 @@ impl<T> fmt::Debug for Sender<T> {
 /// assert_eq!(r.recv(), Ok(2)); // Received after 1 second.
 /// ```
 pub struct Receiver<T> {
-    flavor: ReceiverFlavor<T>,
-}
-
-/// Receiver flavors.
-enum ReceiverFlavor<T> {
-    /// Bounded channel based on a preallocated array.
-    Array(counter::Receiver<flavors::array::Channel<T>>),
-
-    /// Unbounded channel implemented as a linked list.
-    List(counter::Receiver<flavors::list::Channel<T>>),
-
-    /// Zero-capacity channel.
-    Zero(counter::Receiver<flavors::zero::Channel<T>>),
+    inner: counter::Receiver<T>,
 }
 
 unsafe impl<T: Send> Send for Receiver<T> {}
@@ -374,11 +325,7 @@ impl<T> Receiver<T> {
     /// assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
     /// ```
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        match &self.flavor {
-            ReceiverFlavor::Array(chan) => chan.try_recv(),
-            ReceiverFlavor::List(chan) => chan.try_recv(),
-            ReceiverFlavor::Zero(chan) => chan.try_recv(),
-        }
+        self.inner.try_recv()
     }
 
     /// Blocks the current thread until a message is received or the channel is empty and
@@ -410,12 +357,7 @@ impl<T> Receiver<T> {
     /// assert_eq!(r.recv(), Err(RecvError));
     /// ```
     pub fn recv(&self) -> Result<T, RecvError> {
-        match &self.flavor {
-            ReceiverFlavor::Array(chan) => chan.recv(None),
-            ReceiverFlavor::List(chan) => chan.recv(None),
-            ReceiverFlavor::Zero(chan) => chan.recv(None),
-        }
-        .map_err(|_| RecvError)
+        self.inner.recv(None).map_err(|_| RecvError)
     }
 
     /// Waits for a message to be received from the channel, but only for a limited time.
@@ -457,12 +399,7 @@ impl<T> Receiver<T> {
     /// ```
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         let deadline = Instant::now() + timeout;
-
-        match &self.flavor {
-            ReceiverFlavor::Array(chan) => chan.recv(Some(deadline)),
-            ReceiverFlavor::List(chan) => chan.recv(Some(deadline)),
-            ReceiverFlavor::Zero(chan) => chan.recv(Some(deadline)),
-        }
+        self.inner.recv(Some(deadline))
     }
 
     /// A blocking iterator over messages in the channel.
@@ -538,24 +475,16 @@ impl<T> Receiver<T> {
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         unsafe {
-            match &self.flavor {
-                ReceiverFlavor::Array(chan) => chan.release(|c| c.disconnect()),
-                ReceiverFlavor::List(chan) => chan.release(|c| c.disconnect()),
-                ReceiverFlavor::Zero(chan) => chan.release(|c| c.disconnect()),
-            }
+            self.inner.release(|c| c.disconnect()) // TODO: we don't need the closure anymore
         }
     }
 }
 
 impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Self {
-        let flavor = match &self.flavor {
-            ReceiverFlavor::Array(chan) => ReceiverFlavor::Array(chan.acquire()),
-            ReceiverFlavor::List(chan) => ReceiverFlavor::List(chan.acquire()),
-            ReceiverFlavor::Zero(chan) => ReceiverFlavor::Zero(chan.acquire()),
-        };
-
-        Receiver { flavor }
+        Receiver {
+            inner: self.inner.acquire(),
+        }
     }
 }
 

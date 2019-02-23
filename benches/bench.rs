@@ -1,12 +1,12 @@
 #![feature(test)]
 
-extern crate new_mpsc;
 extern crate crossbeam_utils;
+extern crate new_mpsc;
 extern crate num_cpus;
 extern crate test;
 
-use new_mpsc::{bounded, unbounded};
 use crossbeam_utils::thread::scope;
+use new_mpsc::{bounded, unbounded};
 use test::Bencher;
 
 const TOTAL_STEPS: usize = 40_000;

@@ -453,3 +453,25 @@ impl<T> Drop for Channel<T> {
         }
     }
 }
+
+impl<T> crate::channel::Channel<T> for Channel<T> {
+    fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
+        self.try_send(msg)
+    }
+
+    fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>> {
+        self.send(msg, deadline)
+    }
+
+    fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.try_recv()
+    }
+
+    fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError> {
+        self.recv(deadline)
+    }
+
+    fn disconnect(&self) -> bool {
+        self.disconnect()
+    }
+}
