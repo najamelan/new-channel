@@ -80,36 +80,6 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Writes a message into the packet.
-    unsafe fn write(&self, packet: *const Packet<T>, msg: T) -> Result<(), T> {
-        // If there is no packet, the channel is disconnected.
-        if packet.is_null() {
-            return Err(msg);
-        }
-
-        let packet = &*packet;
-        packet.msg.get().write(Some(msg));
-        packet.ready.store(true, Ordering::Release);
-        Ok(())
-    }
-
-    /// Reads a message from the packet.
-    unsafe fn read(&self, packet: *const Packet<T>) -> Result<T, ()> {
-        // If there is no packet, the channel is disconnected.
-        if packet.is_null() {
-            return Err(());
-        }
-
-        let packet = &*packet;
-
-        // The message has been in the packet from the beginning, so there is no need to wait
-        // for it. However, after reading the message, we need to set `ready` to `true` in
-        // order to signal that the packet can be destroyed.
-        let msg = packet.msg.get().replace(None).unwrap();
-        packet.ready.store(true, Ordering::Release);
-        Ok(msg)
-    }
-
     /// Attempts to send a message into the channel.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         let mut inner = self.inner.lock();
@@ -118,9 +88,9 @@ impl<T> Channel<T> {
         if let Some(operation) = inner.receivers.try_select() {
             drop(inner);
             unsafe {
-                self.write(operation.packet as *const Packet<T>, msg)
-                    .ok()
-                    .unwrap();
+                let packet = &*(operation.packet as *const Packet<T>);
+                packet.msg.get().write(Some(msg));
+                packet.ready.store(true, Ordering::Release);
             }
             Ok(())
         } else if inner.is_disconnected {
@@ -138,9 +108,9 @@ impl<T> Channel<T> {
         if let Some(operation) = inner.receivers.try_select() {
             drop(inner);
             unsafe {
-                self.write(operation.packet as *const Packet<T>, msg)
-                    .ok()
-                    .unwrap();
+                let packet = &*(operation.packet as *const Packet<T>);
+                packet.msg.get().write(Some(msg));
+                packet.ready.store(true, Ordering::Release);
             }
             return Ok(());
         }
@@ -189,8 +159,10 @@ impl<T> Channel<T> {
         if let Some(operation) = inner.senders.try_select() {
             drop(inner);
             unsafe {
-                self.read(operation.packet as *const Packet<T>)
-                    .map_err(|_| TryRecvError::Disconnected)
+                let packet = &*(operation.packet as *const Packet<T>);
+                let msg = packet.msg.get().replace(None).unwrap();
+                packet.ready.store(true, Ordering::Release);
+                Ok(msg)
             }
         } else if inner.is_disconnected {
             Err(TryRecvError::Disconnected)
@@ -207,9 +179,10 @@ impl<T> Channel<T> {
         if let Some(operation) = inner.senders.try_select() {
             drop(inner);
             unsafe {
-                return self
-                    .read(operation.packet as *const Packet<T>)
-                    .map_err(|_| RecvTimeoutError::Disconnected);
+                let packet = &*(operation.packet as *const Packet<T>);
+                let msg = packet.msg.get().replace(None).unwrap();
+                packet.ready.store(true, Ordering::Release);
+                return Ok(msg);
             }
         }
 
