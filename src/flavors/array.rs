@@ -80,7 +80,7 @@ impl<T> Channel<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the capacity is not in the range `1 ..= usize::max_value() / 4`.
+    /// Panics if the capacity is zero.
     pub fn with_capacity(cap: usize) -> Self {
         assert!(cap > 0, "capacity must be positive");
 
