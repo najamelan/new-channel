@@ -13,4 +13,5 @@ categories = ["algorithms", "concurrency", "data-structures"]
 
 [dev-dependencies]
 crossbeam-utils = "0.6.5"
+num_cpus = "1.10.0"
 rand = "0.6"
