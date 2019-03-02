@@ -1,14 +1,14 @@
 [package]
-name = "new-mpsc"
+name = "new-channel"
 version = "0.0.0"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/stjepang/new-mpsc"
-homepage = "https://github.com/stjepang/new-mpsc"
-documentation = "https://docs.rs/new-mpsc"
-description = "New mpsc channels"
-keywords = ["channel", "mpsc"]
+repository = "https://github.com/stjepang/new-channel"
+homepage = "https://github.com/stjepang/new-channel"
+documentation = "https://docs.rs/new-channel"
+description = "Proposed new channels for Rust's standard library"
+keywords = ["channel"]
 categories = ["algorithms", "concurrency", "data-structures"]
 
 [dev-dependencies]

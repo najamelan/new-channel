@@ -1,7 +1,7 @@
 //! Tests for the list channel flavor.
 
 extern crate crossbeam_utils;
-extern crate new_mpsc;
+extern crate new_channel;
 extern crate rand;
 
 use std::any::Any;
@@ -11,9 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_utils::thread::scope;
-use new_mpsc::{unbounded, Receiver};
-use new_mpsc::{RecvError, RecvTimeoutError, TryRecvError};
-use new_mpsc::{SendError, SendTimeoutError, TrySendError};
+use new_channel::{unbounded, Receiver};
+use new_channel::{RecvError, RecvTimeoutError, TryRecvError};
+use new_channel::{SendError, SendTimeoutError, TrySendError};
 use rand::{thread_rng, Rng};
 
 fn ms(ms: u64) -> Duration {
@@ -43,7 +43,7 @@ fn try_recv() {
             thread::sleep(ms(1500));
             assert_eq!(r.try_recv(), Ok(7));
             thread::sleep(ms(500));
-            assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
+            assert_eq!(r.try_recv(), Err(TryRecvError::Closed));
         });
         scope.spawn(move |_| {
             thread::sleep(ms(1000));
@@ -86,7 +86,7 @@ fn recv_timeout() {
             assert_eq!(r.recv_timeout(ms(1000)), Ok(7));
             assert_eq!(
                 r.recv_timeout(ms(1000)),
-                Err(RecvTimeoutError::Disconnected)
+                Err(RecvTimeoutError::Closed)
             );
         });
         scope.spawn(move |_| {
@@ -105,7 +105,7 @@ fn try_send() {
     }
 
     drop(r);
-    assert_eq!(s.try_send(777), Err(TrySendError::Disconnected(777)));
+    assert_eq!(s.try_send(777), Err(TrySendError::Closed(777)));
 }
 
 #[test]
@@ -129,12 +129,12 @@ fn send_timeout() {
     drop(r);
     assert_eq!(
         s.send_timeout(777, ms(0)),
-        Err(SendTimeoutError::Disconnected(777))
+        Err(SendTimeoutError::Closed(777))
     );
 }
 
 #[test]
-fn send_after_disconnect() {
+fn send_after_close() {
     let (s, r) = unbounded();
 
     s.send(1).unwrap();
@@ -144,15 +144,15 @@ fn send_after_disconnect() {
     drop(r);
 
     assert_eq!(s.send(4), Err(SendError(4)));
-    assert_eq!(s.try_send(5), Err(TrySendError::Disconnected(5)));
+    assert_eq!(s.try_send(5), Err(TrySendError::Closed(5)));
     assert_eq!(
         s.send_timeout(6, ms(0)),
-        Err(SendTimeoutError::Disconnected(6))
+        Err(SendTimeoutError::Closed(6))
     );
 }
 
 #[test]
-fn recv_after_disconnect() {
+fn recv_after_close() {
     let (s, r) = unbounded();
 
     s.send(1).unwrap();
@@ -168,7 +168,7 @@ fn recv_after_disconnect() {
 }
 
 #[test]
-fn disconnect_wakes_receiver() {
+fn close_wakes_receiver() {
     let (s, r) = unbounded::<()>();
 
     scope(|scope| {

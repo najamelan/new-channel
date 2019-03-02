@@ -19,8 +19,8 @@ pub enum Selected {
     /// The attempt to block the current thread has been aborted.
     Aborted,
 
-    /// An operation became ready because a channel is disconnected.
-    Disconnected,
+    /// An operation became ready because a channel is closed.
+    Closed,
 
     /// An operation became ready because a message can be sent or received.
     Operation,
@@ -32,7 +32,7 @@ impl From<usize> for Selected {
         match val {
             0 => Selected::Waiting,
             1 => Selected::Aborted,
-            2 => Selected::Disconnected,
+            2 => Selected::Closed,
             3 => Selected::Operation,
             _ => panic!("cannot convert `usize` to `Selected`"),
         }
@@ -45,7 +45,7 @@ impl Into<usize> for Selected {
         match self {
             Selected::Waiting => 0,
             Selected::Aborted => 1,
-            Selected::Disconnected => 2,
+            Selected::Closed => 2,
             Selected::Operation => 3,
         }
     }
@@ -141,11 +141,11 @@ impl Waker {
         entry
     }
 
-    /// Notifies all registered operations that the channel is disconnected.
+    /// Notifies all registered operations that the channel is closed.
     #[inline]
-    pub fn disconnect(&mut self) {
+    pub fn close(&mut self) {
         for entry in self.selectors.iter() {
-            if entry.cx.try_select(Selected::Disconnected).is_ok() {
+            if entry.cx.try_select(Selected::Closed).is_ok() {
                 // Wake the thread up.
                 //
                 // Here we don't remove the entry from the queue. Registered threads must
@@ -215,11 +215,11 @@ impl SyncWaker {
         }
     }
 
-    /// Notifies all threads that the channel is disconnected.
+    /// Notifies all threads that the channel is closed.
     #[inline]
-    pub fn disconnect(&self) {
+    pub fn close(&self) {
         let mut inner = self.inner.lock();
-        inner.disconnect();
+        inner.close();
         self.is_empty
             .store(inner.selectors.is_empty(), Ordering::SeqCst);
     }

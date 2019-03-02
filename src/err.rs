@@ -3,7 +3,7 @@ use std::fmt;
 
 /// An error returned from the [`send`] method.
 ///
-/// The message could not be sent because the channel is disconnected.
+/// The message could not be sent because the channel is closed.
 ///
 /// The error contains the message so it can be recovered.
 ///
@@ -24,8 +24,8 @@ pub enum TrySendError<T> {
     /// available to receive the message at the time.
     Full(T),
 
-    /// The message could not be sent because the channel is disconnected.
-    Disconnected(T),
+    /// The message could not be sent because the channel is closed.
+    Closed(T),
 }
 
 /// An error returned from the [`send_timeout`] method.
@@ -41,13 +41,13 @@ pub enum SendTimeoutError<T> {
     /// available to receive the message and the operation timed out.
     Timeout(T),
 
-    /// The message could not be sent because the channel is disconnected.
-    Disconnected(T),
+    /// The message could not be sent because the channel is closed.
+    Closed(T),
 }
 
 /// An error returned from the [`recv`] method.
 ///
-/// A message could not be received because the channel is empty and disconnected.
+/// A message could not be received because the channel is empty and closed.
 ///
 /// [`recv`]: struct.Receiver.html#method.recv
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -64,8 +64,8 @@ pub enum TryRecvError {
     /// available to send a message at the time.
     Empty,
 
-    /// The message could not be received because the channel is empty and disconnected.
-    Disconnected,
+    /// The message could not be received because the channel is empty and closed.
+    Closed,
 }
 
 /// An error returned from the [`recv_timeout`] method.
@@ -79,8 +79,8 @@ pub enum RecvTimeoutError {
     /// available to send a message and the operation timed out.
     Timeout,
 
-    /// The message could not be received because the channel is empty and disconnected.
-    Disconnected,
+    /// The message could not be received because the channel is empty and closed.
+    Closed,
 }
 
 impl<T> fmt::Debug for SendError<T> {
@@ -91,13 +91,13 @@ impl<T> fmt::Debug for SendError<T> {
 
 impl<T> fmt::Display for SendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        "sending on a disconnected channel".fmt(f)
+        "sending on a closed channel".fmt(f)
     }
 }
 
 impl<T: Send> error::Error for SendError<T> {
     fn description(&self) -> &str {
-        "sending on a disconnected channel"
+        "sending on a closed channel"
     }
 
     fn cause(&self) -> Option<&error::Error> {
@@ -111,7 +111,7 @@ impl<T> SendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use new_mpsc::unbounded;
+    /// use new_channel::unbounded;
     ///
     /// let (s, r) = unbounded();
     /// drop(r);
@@ -129,7 +129,7 @@ impl<T> fmt::Debug for TrySendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TrySendError::Full(..) => "Full(..)".fmt(f),
-            TrySendError::Disconnected(..) => "Disconnected(..)".fmt(f),
+            TrySendError::Closed(..) => "Closed(..)".fmt(f),
         }
     }
 }
@@ -138,7 +138,7 @@ impl<T> fmt::Display for TrySendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TrySendError::Full(..) => "sending on a full channel".fmt(f),
-            TrySendError::Disconnected(..) => "sending on a disconnected channel".fmt(f),
+            TrySendError::Closed(..) => "sending on a closed channel".fmt(f),
         }
     }
 }
@@ -147,7 +147,7 @@ impl<T: Send> error::Error for TrySendError<T> {
     fn description(&self) -> &str {
         match *self {
             TrySendError::Full(..) => "sending on a full channel",
-            TrySendError::Disconnected(..) => "sending on a disconnected channel",
+            TrySendError::Closed(..) => "sending on a closed channel",
         }
     }
 
@@ -159,7 +159,7 @@ impl<T: Send> error::Error for TrySendError<T> {
 impl<T> From<SendError<T>> for TrySendError<T> {
     fn from(err: SendError<T>) -> TrySendError<T> {
         match err {
-            SendError(t) => TrySendError::Disconnected(t),
+            SendError(t) => TrySendError::Closed(t),
         }
     }
 }
@@ -170,7 +170,7 @@ impl<T> TrySendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use new_mpsc::bounded;
+    /// use new_channel::bounded;
     ///
     /// let (s, r) = bounded(0);
     ///
@@ -181,7 +181,7 @@ impl<T> TrySendError<T> {
     pub fn into_inner(self) -> T {
         match self {
             TrySendError::Full(v) => v,
-            TrySendError::Disconnected(v) => v,
+            TrySendError::Closed(v) => v,
         }
     }
 
@@ -193,10 +193,10 @@ impl<T> TrySendError<T> {
         }
     }
 
-    /// Returns `true` if the send operation failed because the channel is disconnected.
-    pub fn is_disconnected(&self) -> bool {
+    /// Returns `true` if the send operation failed because the channel is closed.
+    pub fn is_closed(&self) -> bool {
         match self {
-            TrySendError::Disconnected(_) => true,
+            TrySendError::Closed(_) => true,
             _ => false,
         }
     }
@@ -212,14 +212,14 @@ impl<T> fmt::Display for SendTimeoutError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             SendTimeoutError::Timeout(..) => "timed out waiting on send operation".fmt(f),
-            SendTimeoutError::Disconnected(..) => "sending on a disconnected channel".fmt(f),
+            SendTimeoutError::Closed(..) => "sending on a closed channel".fmt(f),
         }
     }
 }
 
 impl<T: Send> error::Error for SendTimeoutError<T> {
     fn description(&self) -> &str {
-        "sending on an empty and disconnected channel"
+        "sending on an empty and closed channel"
     }
 
     fn cause(&self) -> Option<&error::Error> {
@@ -230,7 +230,7 @@ impl<T: Send> error::Error for SendTimeoutError<T> {
 impl<T> From<SendError<T>> for SendTimeoutError<T> {
     fn from(err: SendError<T>) -> SendTimeoutError<T> {
         match err {
-            SendError(e) => SendTimeoutError::Disconnected(e),
+            SendError(e) => SendTimeoutError::Closed(e),
         }
     }
 }
@@ -242,7 +242,7 @@ impl<T> SendTimeoutError<T> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use new_mpsc::unbounded;
+    /// use new_channel::unbounded;
     ///
     /// let (s, r) = unbounded();
     ///
@@ -253,7 +253,7 @@ impl<T> SendTimeoutError<T> {
     pub fn into_inner(self) -> T {
         match self {
             SendTimeoutError::Timeout(v) => v,
-            SendTimeoutError::Disconnected(v) => v,
+            SendTimeoutError::Closed(v) => v,
         }
     }
 
@@ -265,10 +265,10 @@ impl<T> SendTimeoutError<T> {
         }
     }
 
-    /// Returns `true` if the send operation failed because the channel is disconnected.
-    pub fn is_disconnected(&self) -> bool {
+    /// Returns `true` if the send operation failed because the channel is closed.
+    pub fn is_closed(&self) -> bool {
         match self {
-            SendTimeoutError::Disconnected(_) => true,
+            SendTimeoutError::Closed(_) => true,
             _ => false,
         }
     }
@@ -276,13 +276,13 @@ impl<T> SendTimeoutError<T> {
 
 impl fmt::Display for RecvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        "receiving on an empty and disconnected channel".fmt(f)
+        "receiving on an empty and closed channel".fmt(f)
     }
 }
 
 impl error::Error for RecvError {
     fn description(&self) -> &str {
-        "receiving on an empty and disconnected channel"
+        "receiving on an empty and closed channel"
     }
 
     fn cause(&self) -> Option<&error::Error> {
@@ -294,7 +294,7 @@ impl fmt::Display for TryRecvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             TryRecvError::Empty => "receiving on an empty channel".fmt(f),
-            TryRecvError::Disconnected => "receiving on an empty and disconnected channel".fmt(f),
+            TryRecvError::Closed => "receiving on an empty and closed channel".fmt(f),
         }
     }
 }
@@ -303,7 +303,7 @@ impl error::Error for TryRecvError {
     fn description(&self) -> &str {
         match *self {
             TryRecvError::Empty => "receiving on an empty channel",
-            TryRecvError::Disconnected => "receiving on an empty and disconnected channel",
+            TryRecvError::Closed => "receiving on an empty and closed channel",
         }
     }
 
@@ -315,7 +315,7 @@ impl error::Error for TryRecvError {
 impl From<RecvError> for TryRecvError {
     fn from(err: RecvError) -> TryRecvError {
         match err {
-            RecvError => TryRecvError::Disconnected,
+            RecvError => TryRecvError::Closed,
         }
     }
 }
@@ -329,10 +329,10 @@ impl TryRecvError {
         }
     }
 
-    /// Returns `true` if the receive operation failed because the channel is disconnected.
-    pub fn is_disconnected(&self) -> bool {
+    /// Returns `true` if the receive operation failed because the channel is closed.
+    pub fn is_closed(&self) -> bool {
         match self {
-            TryRecvError::Disconnected => true,
+            TryRecvError::Closed => true,
             _ => false,
         }
     }
@@ -342,7 +342,7 @@ impl fmt::Display for RecvTimeoutError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             RecvTimeoutError::Timeout => "timed out waiting on receive operation".fmt(f),
-            RecvTimeoutError::Disconnected => "channel is empty and disconnected".fmt(f),
+            RecvTimeoutError::Closed => "channel is empty and closed".fmt(f),
         }
     }
 }
@@ -351,7 +351,7 @@ impl error::Error for RecvTimeoutError {
     fn description(&self) -> &str {
         match *self {
             RecvTimeoutError::Timeout => "timed out waiting on receive operation",
-            RecvTimeoutError::Disconnected => "channel is empty and disconnected",
+            RecvTimeoutError::Closed => "channel is empty and closed",
         }
     }
 
@@ -363,7 +363,7 @@ impl error::Error for RecvTimeoutError {
 impl From<RecvError> for RecvTimeoutError {
     fn from(err: RecvError) -> RecvTimeoutError {
         match err {
-            RecvError => RecvTimeoutError::Disconnected,
+            RecvError => RecvTimeoutError::Closed,
         }
     }
 }
@@ -377,10 +377,10 @@ impl RecvTimeoutError {
         }
     }
 
-    /// Returns `true` if the receive operation failed because the channel is disconnected.
-    pub fn is_disconnected(&self) -> bool {
+    /// Returns `true` if the receive operation failed because the channel is closed.
+    pub fn is_closed(&self) -> bool {
         match self {
-            RecvTimeoutError::Disconnected => true,
+            RecvTimeoutError::Closed => true,
             _ => false,
         }
     }

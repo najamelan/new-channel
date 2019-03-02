@@ -1,7 +1,7 @@
 //! Tests for the zero channel flavor.
 
 extern crate crossbeam_utils;
-extern crate new_mpsc;
+extern crate new_channel;
 extern crate rand;
 
 use std::any::Any;
@@ -11,9 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_utils::thread::scope;
-use new_mpsc::{bounded, Receiver};
-use new_mpsc::{RecvError, RecvTimeoutError, TryRecvError};
-use new_mpsc::{SendError, SendTimeoutError, TrySendError};
+use new_channel::{bounded, Receiver};
+use new_channel::{RecvError, RecvTimeoutError, TryRecvError};
+use new_channel::{SendError, SendTimeoutError, TrySendError};
 use rand::{thread_rng, Rng};
 
 fn ms(ms: u64) -> Duration {
@@ -37,7 +37,7 @@ fn try_recv() {
             thread::sleep(ms(1500));
             assert_eq!(r.try_recv(), Ok(7));
             thread::sleep(ms(500));
-            assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
+            assert_eq!(r.try_recv(), Err(TryRecvError::Closed));
         });
         scope.spawn(move |_| {
             thread::sleep(ms(1000));
@@ -80,7 +80,7 @@ fn recv_timeout() {
             assert_eq!(r.recv_timeout(ms(1000)), Ok(7));
             assert_eq!(
                 r.recv_timeout(ms(1000)),
-                Err(RecvTimeoutError::Disconnected)
+                Err(RecvTimeoutError::Closed)
             );
         });
         scope.spawn(move |_| {
@@ -101,7 +101,7 @@ fn try_send() {
             thread::sleep(ms(1500));
             assert_eq!(s.try_send(8), Ok(()));
             thread::sleep(ms(500));
-            assert_eq!(s.try_send(9), Err(TrySendError::Disconnected(9)));
+            assert_eq!(s.try_send(9), Err(TrySendError::Closed(9)));
         });
         scope.spawn(move |_| {
             thread::sleep(ms(1000));
@@ -146,7 +146,7 @@ fn send_timeout() {
             assert_eq!(s.send_timeout(8, ms(1000)), Ok(()));
             assert_eq!(
                 s.send_timeout(9, ms(1000)),
-                Err(SendTimeoutError::Disconnected(9))
+                Err(SendTimeoutError::Closed(9))
             );
         });
         scope.spawn(move |_| {
@@ -158,7 +158,7 @@ fn send_timeout() {
 }
 
 #[test]
-fn disconnect_wakes_sender() {
+fn close_wakes_sender() {
     let (s, r) = bounded(0);
 
     scope(|scope| {
@@ -174,7 +174,7 @@ fn disconnect_wakes_sender() {
 }
 
 #[test]
-fn disconnect_wakes_receiver() {
+fn close_wakes_receiver() {
     let (s, r) = bounded::<()>(0);
 
     scope(|scope| {

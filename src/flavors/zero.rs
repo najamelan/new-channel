@@ -54,8 +54,8 @@ struct Inner {
     /// Receivers waiting to pair up with a send operation.
     receivers: Waker,
 
-    /// Equals `true` when the channel is disconnected.
-    is_disconnected: bool,
+    /// Equals `true` when the channel is closed.
+    is_closed: bool,
 }
 
 /// Zero-capacity channel.
@@ -74,7 +74,7 @@ impl<T> Channel<T> {
             inner: Spinlock::new(Inner {
                 senders: Waker::new(),
                 receivers: Waker::new(),
-                is_disconnected: false,
+                is_closed: false,
             }),
             _marker: PhantomData,
         }
@@ -93,8 +93,8 @@ impl<T> Channel<T> {
                 packet.ready.store(true, Ordering::Release);
             }
             Ok(())
-        } else if inner.is_disconnected {
-            Err(TrySendError::Disconnected(msg))
+        } else if inner.is_closed {
+            Err(TrySendError::Closed(msg))
         } else {
             Err(TrySendError::Full(msg))
         }
@@ -115,8 +115,8 @@ impl<T> Channel<T> {
             return Ok(());
         }
 
-        if inner.is_disconnected {
-            return Err(SendTimeoutError::Disconnected(msg));
+        if inner.is_closed {
+            return Err(SendTimeoutError::Closed(msg));
         }
 
         Context::with(|cx| {
@@ -137,10 +137,10 @@ impl<T> Channel<T> {
                     let msg = unsafe { packet.msg.get().replace(None).unwrap() };
                     Err(SendTimeoutError::Timeout(msg))
                 }
-                Selected::Disconnected => {
+                Selected::Closed => {
                     self.inner.lock().senders.unregister(cx).unwrap();
                     let msg = unsafe { packet.msg.get().replace(None).unwrap() };
-                    Err(SendTimeoutError::Disconnected(msg))
+                    Err(SendTimeoutError::Closed(msg))
                 }
                 Selected::Operation => {
                     // Wait until the message is read, then drop the packet.
@@ -164,8 +164,8 @@ impl<T> Channel<T> {
                 packet.ready.store(true, Ordering::Release);
                 Ok(msg)
             }
-        } else if inner.is_disconnected {
-            Err(TryRecvError::Disconnected)
+        } else if inner.is_closed {
+            Err(TryRecvError::Closed)
         } else {
             Err(TryRecvError::Empty)
         }
@@ -186,8 +186,8 @@ impl<T> Channel<T> {
             }
         }
 
-        if inner.is_disconnected {
-            return Err(RecvTimeoutError::Disconnected);
+        if inner.is_closed {
+            return Err(RecvTimeoutError::Closed);
         }
 
         Context::with(|cx| {
@@ -207,9 +207,9 @@ impl<T> Channel<T> {
                     self.inner.lock().receivers.unregister(cx).unwrap();
                     Err(RecvTimeoutError::Timeout)
                 }
-                Selected::Disconnected => {
+                Selected::Closed => {
                     self.inner.lock().receivers.unregister(cx).unwrap();
-                    Err(RecvTimeoutError::Disconnected)
+                    Err(RecvTimeoutError::Closed)
                 }
                 Selected::Operation => {
                     // Wait until the message is provided, then read it.
@@ -220,16 +220,16 @@ impl<T> Channel<T> {
         })
     }
 
-    /// Disconnects the channel and wakes up all blocked senders and receivers.
+    /// Closes the channel and wakes up all blocked senders and receivers.
     ///
-    /// Returns `true` if this call disconnected the channel.
-    pub fn disconnect(&self) -> bool {
+    /// Returns `true` if this call closed the channel.
+    pub fn close(&self) -> bool {
         let mut inner = self.inner.lock();
 
-        if !inner.is_disconnected {
-            inner.is_disconnected = true;
-            inner.senders.disconnect();
-            inner.receivers.disconnect();
+        if !inner.is_closed {
+            inner.is_closed = true;
+            inner.senders.close();
+            inner.receivers.close();
             true
         } else {
             false
@@ -254,7 +254,7 @@ impl<T> crate::channel::Channel<T> for Channel<T> {
         self.recv(deadline)
     }
 
-    fn disconnect(&self) -> bool {
-        self.disconnect()
+    fn close(&self) -> bool {
+        self.close()
     }
 }

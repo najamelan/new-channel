@@ -1,6 +1,6 @@
 //! Tests copied from `std::sync::mpsc`.
 
-extern crate new_mpsc;
+extern crate new_channel;
 
 use std::sync::mpsc::{RecvError, RecvTimeoutError, TryRecvError};
 use std::sync::mpsc::{SendError, TrySendError};
@@ -8,14 +8,14 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub struct Sender<T> {
-    pub inner: new_mpsc::Sender<T>,
+    pub inner: new_channel::Sender<T>,
 }
 
 impl<T> Sender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
         self.inner
             .send(t)
-            .map_err(|new_mpsc::SendError(m)| SendError(m))
+            .map_err(|new_channel::SendError(m)| SendError(m))
     }
 }
 
@@ -28,20 +28,20 @@ impl<T> Clone for Sender<T> {
 }
 
 pub struct SyncSender<T> {
-    pub inner: new_mpsc::Sender<T>,
+    pub inner: new_channel::Sender<T>,
 }
 
 impl<T> SyncSender<T> {
     pub fn send(&self, t: T) -> Result<(), SendError<T>> {
         self.inner
             .send(t)
-            .map_err(|new_mpsc::SendError(m)| SendError(m))
+            .map_err(|new_channel::SendError(m)| SendError(m))
     }
 
     pub fn try_send(&self, t: T) -> Result<(), TrySendError<T>> {
         self.inner.try_send(t).map_err(|err| match err {
-            new_mpsc::TrySendError::Full(m) => TrySendError::Full(m),
-            new_mpsc::TrySendError::Disconnected(m) => TrySendError::Disconnected(m),
+            new_channel::TrySendError::Full(m) => TrySendError::Full(m),
+            new_channel::TrySendError::Closed(m) => TrySendError::Disconnected(m),
         })
     }
 }
@@ -55,14 +55,14 @@ impl<T> Clone for SyncSender<T> {
 }
 
 pub struct Receiver<T> {
-    pub inner: new_mpsc::Receiver<T>,
+    pub inner: new_channel::Receiver<T>,
 }
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.inner.try_recv().map_err(|err| match err {
-            new_mpsc::TryRecvError::Empty => TryRecvError::Empty,
-            new_mpsc::TryRecvError::Disconnected => TryRecvError::Disconnected,
+            new_channel::TryRecvError::Empty => TryRecvError::Empty,
+            new_channel::TryRecvError::Closed => TryRecvError::Disconnected,
         })
     }
 
@@ -72,8 +72,8 @@ impl<T> Receiver<T> {
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         self.inner.recv_timeout(timeout).map_err(|err| match err {
-            new_mpsc::RecvTimeoutError::Timeout => RecvTimeoutError::Timeout,
-            new_mpsc::RecvTimeoutError::Disconnected => RecvTimeoutError::Disconnected,
+            new_channel::RecvTimeoutError::Timeout => RecvTimeoutError::Timeout,
+            new_channel::RecvTimeoutError::Closed => RecvTimeoutError::Disconnected,
         })
     }
 
@@ -141,14 +141,14 @@ impl<T> Iterator for IntoIter<T> {
 }
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
-    let (s, r) = new_mpsc::unbounded();
+    let (s, r) = new_channel::unbounded();
     let s = Sender { inner: s };
     let r = Receiver { inner: r };
     (s, r)
 }
 
 pub fn sync_channel<T>(bound: usize) -> (SyncSender<T>, Receiver<T>) {
-    let (s, r) = new_mpsc::bounded(bound);
+    let (s, r) = new_channel::bounded(bound);
     let s = SyncSender { inner: s };
     let r = Receiver { inner: r };
     (s, r)

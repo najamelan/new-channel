@@ -48,7 +48,7 @@ pub struct Channel<T> {
     ///
     /// This value is a "stamp" consisting of an index into the buffer, a mark bit, and a lap, but
     /// packed into a single `usize`. The lower bits represent the index, while the upper bits
-    /// represent the lap. The mark bit indicates that the channel is disconnected.
+    /// represent the lap. The mark bit indicates that the channel is closed.
     ///
     /// Messages are pushed into the tail of the channel.
     tail: CachePadded<AtomicUsize>,
@@ -62,13 +62,13 @@ pub struct Channel<T> {
     /// A stamp with the value of `{ lap: 1, mark: 0, index: 0 }`.
     one_lap: usize,
 
-    /// If this bit is set in the tail, that means the channel is disconnected.
+    /// If this bit is set in the tail, that means the channel is closed.
     mark_bit: usize,
 
     /// Senders waiting while the channel is full.
     senders: SyncWaker,
 
-    /// Receivers waiting while the channel is empty and not disconnected.
+    /// Receivers waiting while the channel is empty and not closed.
     receivers: SyncWaker,
 
     /// Indicates that dropping a `Channel<T>` may drop values of type `T`.
@@ -129,9 +129,9 @@ impl<T> Channel<T> {
         let mut tail = self.tail.load(Ordering::Relaxed);
 
         loop {
-            // Check if the channel is disconnected.
+            // Check if the channel is closed.
             if tail & self.mark_bit != 0 {
-                return Err(TrySendError::Disconnected(msg));
+                return Err(TrySendError::Closed(msg));
             }
 
             // Deconstruct the tail.
@@ -205,8 +205,8 @@ impl<T> Channel<T> {
             loop {
                 match self.try_send(msg) {
                     Ok(()) => return Ok(()),
-                    Err(TrySendError::Disconnected(m)) => {
-                        return Err(SendTimeoutError::Disconnected(m));
+                    Err(TrySendError::Closed(m)) => {
+                        return Err(SendTimeoutError::Closed(m));
                     }
                     Err(TrySendError::Full(m)) => msg = m,
                 }
@@ -223,7 +223,7 @@ impl<T> Channel<T> {
                 self.senders.register(cx);
 
                 // Has the channel become ready just now?
-                if !self.is_full() || self.is_disconnected() {
+                if !self.is_full() || self.is_closed() {
                     let _ = cx.try_select(Selected::Aborted);
                 }
 
@@ -232,7 +232,7 @@ impl<T> Channel<T> {
 
                 match sel {
                     Selected::Waiting => unreachable!(),
-                    Selected::Aborted | Selected::Disconnected => {
+                    Selected::Aborted | Selected::Closed => {
                         self.senders.unregister(cx).unwrap();
                     }
                     Selected::Operation => {}
@@ -301,9 +301,9 @@ impl<T> Channel<T> {
 
                 // If the tail equals the head, that means the channel is empty.
                 if (tail & !self.mark_bit) == head {
-                    // If the channel is disconnected...
+                    // If the channel is closed...
                     if tail & self.mark_bit != 0 {
-                        return Err(TryRecvError::Disconnected);
+                        return Err(TryRecvError::Closed);
                     } else {
                         return Err(TryRecvError::Empty);
                     }
@@ -327,7 +327,7 @@ impl<T> Channel<T> {
             loop {
                 match self.try_recv() {
                     Ok(msg) => return Ok(msg),
-                    Err(TryRecvError::Disconnected) => return Err(RecvTimeoutError::Disconnected),
+                    Err(TryRecvError::Closed) => return Err(RecvTimeoutError::Closed),
                     Err(TryRecvError::Empty) => {}
                 }
 
@@ -343,7 +343,7 @@ impl<T> Channel<T> {
                 self.receivers.register(cx);
 
                 // Has the channel become ready just now?
-                if !self.is_empty() || self.is_disconnected() {
+                if !self.is_empty() || self.is_closed() {
                     let _ = cx.try_select(Selected::Aborted);
                 }
 
@@ -352,9 +352,9 @@ impl<T> Channel<T> {
 
                 match sel {
                     Selected::Waiting => unreachable!(),
-                    Selected::Aborted | Selected::Disconnected => {
+                    Selected::Aborted | Selected::Closed => {
                         self.receivers.unregister(cx).unwrap();
-                        // If the channel was disconnected, we still have to check for remaining
+                        // If the channel was closed, we still have to check for remaining
                         // messages.
                     }
                     Selected::Operation => {}
@@ -369,23 +369,23 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Disconnects the channel and wakes up all blocked senders and receivers.
+    /// Closes the channel and wakes up all blocked senders and receivers.
     ///
-    /// Returns `true` if this call disconnected the channel.
-    pub fn disconnect(&self) -> bool {
+    /// Returns `true` if this call closed the channel.
+    pub fn close(&self) -> bool {
         let tail = self.tail.fetch_or(self.mark_bit, Ordering::SeqCst);
 
         if tail & self.mark_bit == 0 {
-            self.senders.disconnect();
-            self.receivers.disconnect();
+            self.senders.close();
+            self.receivers.close();
             true
         } else {
             false
         }
     }
 
-    /// Returns `true` if the channel is disconnected.
-    pub fn is_disconnected(&self) -> bool {
+    /// Returns `true` if the channel is closed.
+    pub fn is_closed(&self) -> bool {
         self.tail.load(Ordering::SeqCst) & self.mark_bit != 0
     }
 
@@ -471,7 +471,7 @@ impl<T> crate::channel::Channel<T> for Channel<T> {
         self.recv(deadline)
     }
 
-    fn disconnect(&self) -> bool {
-        self.disconnect()
+    fn close(&self) -> bool {
+        self.close()
     }
 }

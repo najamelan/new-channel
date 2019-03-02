@@ -3,7 +3,7 @@
 //! # Hello, world!
 //!
 //! ```
-//! use new_mpsc::unbounded;
+//! use new_channel::unbounded;
 //!
 //! // Create a channel of unbounded capacity.
 //! let (s, r) = unbounded();
@@ -31,7 +31,7 @@
 //! Creating a bounded channel:
 //!
 //! ```
-//! use new_mpsc::bounded;
+//! use new_channel::bounded;
 //!
 //! // Create a channel that can hold at most 5 messages at a time.
 //! let (s, r) = bounded(5);
@@ -48,7 +48,7 @@
 //! Creating an unbounded channel:
 //!
 //! ```
-//! use new_mpsc::unbounded;
+//! use new_channel::unbounded;
 //!
 //! // Create an unbounded channel.
 //! let (s, r) = unbounded();
@@ -64,7 +64,7 @@
 //!
 //! ```
 //! use std::thread;
-//! use new_mpsc::bounded;
+//! use new_channel::bounded;
 //!
 //! // Create a zero-capacity channel.
 //! let (s, r) = bounded(0);
@@ -82,7 +82,7 @@
 //!
 //! ```
 //! use std::thread;
-//! use new_mpsc::bounded;
+//! use new_channel::bounded;
 //!
 //! let (s1, r1) = bounded(0);
 //! let (s2, r2) = (s1.clone(), r1.clone());
@@ -102,7 +102,7 @@
 //! create a separate stream of messages in any way:
 //!
 //! ```
-//! use new_mpsc::unbounded;
+//! use new_channel::unbounded;
 //!
 //! let (s1, r1) = unbounded();
 //! let (s2, r2) = (s1.clone(), r1.clone());
@@ -120,11 +120,11 @@
 //! It's also possible to share senders and receivers by reference:
 //!
 //! ```
-//! # extern crate new_mpsc;
+//! # extern crate new_channel;
 //! # extern crate crossbeam_utils;
 //! # fn main() {
 //! use std::thread;
-//! use new_mpsc::bounded;
+//! use new_channel::bounded;
 //! use crossbeam_utils::thread::scope;
 //!
 //! let (s, r) = bounded(0);
@@ -143,30 +143,27 @@
 //! # }
 //! ```
 //!
-//! # Disconnection
+//! # Closing
 //!
 //! When all senders or all receivers associated with a channel get dropped, the channel becomes
-//! disconnected. No more messages can be sent, but any remaining messages can still be received.
-//! Send and receive operations on a disconnected channel never block.
+//! closed. No more messages can be sent, but any remaining messages can still be received.
+//! Send and receive operations on a closed channel never block.
 //!
 //! ```
-//! use new_mpsc::{unbounded, RecvError};
+//! use new_channel::{unbounded, RecvError};
 //!
 //! let (s, r) = unbounded();
 //! s.send(1).unwrap();
 //! s.send(2).unwrap();
 //! s.send(3).unwrap();
 //!
-//! // The only sender is dropped, disconnecting the channel.
+//! // The only sender is dropped, closing the channel.
 //! drop(s);
 //!
 //! // The remaining messages can be received.
 //! assert_eq!(r.recv(), Ok(1));
 //! assert_eq!(r.recv(), Ok(2));
 //! assert_eq!(r.recv(), Ok(3));
-//!
-//! // There are no more messages in the channel.
-//! assert!(r.is_empty());
 //!
 //! // Note that calling `r.recv()` does not block.
 //! // Instead, `Err(RecvError)` is returned immediately.
@@ -178,13 +175,13 @@
 //! Send and receive operations come in three flavors:
 //!
 //! * Non-blocking (returns immediately with success or failure).
-//! * Blocking (waits until the operation succeeds or the channel becomes disconnected).
+//! * Blocking (waits until the operation succeeds or the channel becomes closed).
 //! * Blocking with a timeout (blocks only for a certain duration of time).
 //!
 //! A simple example showing the difference between non-blocking and blocking operations:
 //!
 //! ```
-//! use new_mpsc::{bounded, RecvError, TryRecvError};
+//! use new_channel::{bounded, RecvError, TryRecvError};
 //!
 //! let (s, r) = bounded(1);
 //!
@@ -203,22 +200,22 @@
 //! // Try receiving a message without blocking.
 //! assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
 //!
-//! // Disconnect the channel.
+//! // Close the channel.
 //! drop(s);
 //!
-//! // This call doesn't block because the channel is now disconnected.
+//! // This call doesn't block because the channel is now closed.
 //! assert_eq!(r.recv(), Err(RecvError));
 //! ```
 //!
 //! # Iteration
 //!
 //! Receivers can be used as iterators. For example, method [`iter`] creates an iterator that
-//! receives messages until the channel becomes empty and disconnected. Note that iteration may
+//! receives messages until the channel becomes empty and closed. Note that iteration may
 //! block waiting for next message to arrive.
 //!
 //! ```
 //! use std::thread;
-//! use new_mpsc::unbounded;
+//! use new_channel::unbounded;
 //!
 //! let (s, r) = unbounded();
 //!
@@ -226,7 +223,7 @@
 //!     s.send(1).unwrap();
 //!     s.send(2).unwrap();
 //!     s.send(3).unwrap();
-//!     drop(s); // Disconnect the channel.
+//!     drop(s); // Close the channel.
 //! });
 //!
 //! // Collect all messages from the channel.
@@ -240,7 +237,7 @@
 //! messages without blocking:
 //!
 //! ```
-//! use new_mpsc::unbounded;
+//! use new_channel::unbounded;
 //!
 //! let (s, r) = unbounded();
 //! s.send(1).unwrap();

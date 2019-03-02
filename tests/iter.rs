@@ -1,10 +1,10 @@
 //! Tests for iteration over receivers.
 
 extern crate crossbeam_utils;
-extern crate new_mpsc;
+extern crate new_channel;
 
 use crossbeam_utils::thread::scope;
-use new_mpsc::unbounded;
+use new_channel::unbounded;
 
 #[test]
 fn nested_recv_iter() {

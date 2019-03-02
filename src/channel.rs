@@ -15,7 +15,7 @@ pub trait Channel<T> {
     fn send(&self, msg: T, deadline: Option<Instant>) -> Result<(), SendTimeoutError<T>>;
     fn try_recv(&self) -> Result<T, TryRecvError>;
     fn recv(&self, deadline: Option<Instant>) -> Result<T, RecvTimeoutError>;
-    fn disconnect(&self) -> bool;
+    fn close(&self) -> bool;
 }
 
 /// Creates a channel of unbounded capacity.
@@ -26,7 +26,7 @@ pub trait Channel<T> {
 ///
 /// ```
 /// use std::thread;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -66,7 +66,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use new_mpsc::bounded;
+/// use new_channel::bounded;
 ///
 /// let (s, r) = bounded(1);
 ///
@@ -89,7 +89,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use new_mpsc::bounded;
+/// use new_channel::bounded;
 ///
 /// let (s, r) = bounded(0);
 ///
@@ -122,7 +122,7 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 ///
 /// ```
 /// use std::thread;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s1, r) = unbounded();
 /// let s2 = s1.clone();
@@ -149,7 +149,7 @@ impl<T> Sender<T> {
     /// Attempts to send a message into the channel without blocking.
     ///
     /// This method will either send a message into the channel immediately or return an error if
-    /// the channel is full or disconnected. The returned error contains the original message.
+    /// the channel is full or closed. The returned error contains the original message.
     ///
     /// If called on a zero-capacity channel, this method will send the message only if there
     /// happens to be a receive operation on the other side of the channel at the same time.
@@ -157,7 +157,7 @@ impl<T> Sender<T> {
     /// # Examples
     ///
     /// ```
-    /// use new_mpsc::{bounded, TrySendError};
+    /// use new_channel::{bounded, TrySendError};
     ///
     /// let (s, r) = bounded(1);
     ///
@@ -165,16 +165,16 @@ impl<T> Sender<T> {
     /// assert_eq!(s.try_send(2), Err(TrySendError::Full(2)));
     ///
     /// drop(r);
-    /// assert_eq!(s.try_send(3), Err(TrySendError::Disconnected(3)));
+    /// assert_eq!(s.try_send(3), Err(TrySendError::Closed(3)));
     /// ```
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         self.inner.try_send(msg)
     }
 
-    /// Blocks the current thread until a message is sent or the channel is disconnected.
+    /// Blocks the current thread until a message is sent or the channel is closed.
     ///
-    /// If the channel is full and not disconnected, this call will block until the send operation
-    /// can proceed. If the channel becomes disconnected, this call will wake up and return an
+    /// If the channel is full and not closed, this call will block until the send operation
+    /// can proceed. If the channel becomes closed, this call will wake up and return an
     /// error. The returned error contains the original message.
     ///
     /// If called on a zero-capacity channel, this method will wait for a receive operation to
@@ -185,7 +185,7 @@ impl<T> Sender<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use new_mpsc::{bounded, SendError};
+    /// use new_channel::{bounded, SendError};
     ///
     /// let (s, r) = bounded(1);
     /// assert_eq!(s.send(1), Ok(()));
@@ -201,15 +201,15 @@ impl<T> Sender<T> {
     /// ```
     pub fn send(&self, msg: T) -> Result<(), SendError<T>> {
         self.inner.send(msg, None).map_err(|err| match err {
-            SendTimeoutError::Disconnected(msg) => SendError(msg),
+            SendTimeoutError::Closed(msg) => SendError(msg),
             SendTimeoutError::Timeout(_) => unreachable!(),
         })
     }
 
     /// Waits for a message to be sent into the channel, but only for a limited time.
     ///
-    /// If the channel is full and not disconnected, this call will block until the send operation
-    /// can proceed or the operation times out. If the channel becomes disconnected, this call will
+    /// If the channel is full and not closed, this call will block until the send operation
+    /// can proceed or the operation times out. If the channel becomes closed, this call will
     /// wake up and return an error. The returned error contains the original message.
     ///
     /// If called on a zero-capacity channel, this method will wait for a receive operation to
@@ -220,7 +220,7 @@ impl<T> Sender<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use new_mpsc::{bounded, SendTimeoutError};
+    /// use new_channel::{bounded, SendTimeoutError};
     ///
     /// let (s, r) = bounded(0);
     ///
@@ -240,7 +240,7 @@ impl<T> Sender<T> {
     /// );
     /// assert_eq!(
     ///     s.send_timeout(3, Duration::from_millis(500)),
-    ///     Err(SendTimeoutError::Disconnected(3)),
+    ///     Err(SendTimeoutError::Closed(3)),
     /// );
     /// ```
     pub fn send_timeout(&self, msg: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
@@ -252,7 +252,7 @@ impl<T> Sender<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         unsafe {
-            self.inner.release(|c| c.disconnect()) // TODO: we don't need the closure anymore
+            self.inner.release(|c| c.close()) // TODO: we don't need the closure anymore
         }
     }
 }
@@ -278,7 +278,7 @@ impl<T> fmt::Debug for Sender<T> {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -313,7 +313,7 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use new_mpsc::{unbounded, TryRecvError};
+    /// use new_channel::{unbounded, TryRecvError};
     ///
     /// let (s, r) = unbounded();
     /// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
@@ -322,17 +322,17 @@ impl<T> Receiver<T> {
     /// drop(s);
     ///
     /// assert_eq!(r.try_recv(), Ok(5));
-    /// assert_eq!(r.try_recv(), Err(TryRecvError::Disconnected));
+    /// assert_eq!(r.try_recv(), Err(TryRecvError::Closed));
     /// ```
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.inner.try_recv()
     }
 
     /// Blocks the current thread until a message is received or the channel is empty and
-    /// disconnected.
+    /// closed.
     ///
-    /// If the channel is empty and not disconnected, this call will block until the receive
-    /// operation can proceed. If the channel is empty and becomes disconnected, this call will
+    /// If the channel is empty and not closed, this call will block until the receive
+    /// operation can proceed. If the channel is empty and becomes closed, this call will
     /// wake up and return an error.
     ///
     /// If called on a zero-capacity channel, this method will wait for a send operation to appear
@@ -343,7 +343,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use new_mpsc::{unbounded, RecvError};
+    /// use new_channel::{unbounded, RecvError};
     ///
     /// let (s, r) = unbounded();
     ///
@@ -362,9 +362,9 @@ impl<T> Receiver<T> {
 
     /// Waits for a message to be received from the channel, but only for a limited time.
     ///
-    /// If the channel is empty and not disconnected, this call will block until the receive
+    /// If the channel is empty and not closed, this call will block until the receive
     /// operation can proceed or the operation times out. If the channel is empty and becomes
-    /// disconnected, this call will wake up and return an error.
+    /// closed, this call will wake up and return an error.
     ///
     /// If called on a zero-capacity channel, this method will wait for a send operation to appear
     /// on the other side of the channel.
@@ -374,7 +374,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use new_mpsc::{unbounded, RecvTimeoutError};
+    /// use new_channel::{unbounded, RecvTimeoutError};
     ///
     /// let (s, r) = unbounded();
     ///
@@ -394,7 +394,7 @@ impl<T> Receiver<T> {
     /// );
     /// assert_eq!(
     ///     r.recv_timeout(Duration::from_secs(1)),
-    ///     Err(RecvTimeoutError::Disconnected),
+    ///     Err(RecvTimeoutError::Closed),
     /// );
     /// ```
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
@@ -405,7 +405,7 @@ impl<T> Receiver<T> {
     /// A blocking iterator over messages in the channel.
     ///
     /// Each call to [`next`] blocks waiting for the next message and then returns it. However, if
-    /// the channel becomes empty and disconnected, it returns [`None`] without blocking.
+    /// the channel becomes empty and closed, it returns [`None`] without blocking.
     ///
     /// [`next`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#tymethod.next
     /// [`None`]: https://doc.rust-lang.org/std/option/enum.Option.html#variant.None
@@ -414,7 +414,7 @@ impl<T> Receiver<T> {
     ///
     /// ```
     /// use std::thread;
-    /// use new_mpsc::unbounded;
+    /// use new_channel::unbounded;
     ///
     /// let (s, r) = unbounded();
     ///
@@ -422,7 +422,7 @@ impl<T> Receiver<T> {
     ///     s.send(1).unwrap();
     ///     s.send(2).unwrap();
     ///     s.send(3).unwrap();
-    ///     drop(s); // Disconnect the channel.
+    ///     drop(s); // Close the channel.
     /// });
     ///
     /// // Collect all messages from the channel.
@@ -447,7 +447,7 @@ impl<T> Receiver<T> {
     /// ```
     /// use std::thread;
     /// use std::time::Duration;
-    /// use new_mpsc::unbounded;
+    /// use new_channel::unbounded;
     ///
     /// let (s, r) = unbounded::<i32>();
     ///
@@ -475,7 +475,7 @@ impl<T> Receiver<T> {
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         unsafe {
-            self.inner.release(|c| c.disconnect()) // TODO: we don't need the closure anymore
+            self.inner.release(|c| c.close()) // TODO: we don't need the closure anymore
         }
     }
 }
@@ -515,7 +515,7 @@ impl<T> IntoIterator for Receiver<T> {
 /// A blocking iterator over messages in a channel.
 ///
 /// Each call to [`next`] blocks waiting for the next message and then returns it. However, if the
-/// channel becomes empty and disconnected, it returns [`None`] without blocking.
+/// channel becomes empty and closed, it returns [`None`] without blocking.
 ///
 /// [`next`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#tymethod.next
 /// [`None`]: https://doc.rust-lang.org/std/option/enum.Option.html#variant.None
@@ -524,7 +524,7 @@ impl<T> IntoIterator for Receiver<T> {
 ///
 /// ```
 /// use std::thread;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -532,7 +532,7 @@ impl<T> IntoIterator for Receiver<T> {
 ///     s.send(1).unwrap();
 ///     s.send(2).unwrap();
 ///     s.send(3).unwrap();
-///     drop(s); // Disconnect the channel.
+///     drop(s); // Close the channel.
 /// });
 ///
 /// // Collect all messages from the channel.
@@ -573,7 +573,7 @@ impl<'a, T> fmt::Debug for Iter<'a, T> {
 /// ```
 /// use std::thread;
 /// use std::time::Duration;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s, r) = unbounded::<i32>();
 ///
@@ -614,7 +614,7 @@ impl<'a, T> fmt::Debug for TryIter<'a, T> {
 /// A blocking iterator over messages in a channel.
 ///
 /// Each call to [`next`] blocks waiting for the next message and then returns it. However, if the
-/// channel becomes empty and disconnected, it returns [`None`] without blocking.
+/// channel becomes empty and closed, it returns [`None`] without blocking.
 ///
 /// [`next`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#tymethod.next
 /// [`None`]: https://doc.rust-lang.org/std/option/enum.Option.html#variant.None
@@ -623,7 +623,7 @@ impl<'a, T> fmt::Debug for TryIter<'a, T> {
 ///
 /// ```
 /// use std::thread;
-/// use new_mpsc::unbounded;
+/// use new_channel::unbounded;
 ///
 /// let (s, r) = unbounded();
 ///
@@ -631,7 +631,7 @@ impl<'a, T> fmt::Debug for TryIter<'a, T> {
 ///     s.send(1).unwrap();
 ///     s.send(2).unwrap();
 ///     s.send(3).unwrap();
-///     drop(s); // Disconnect the channel.
+///     drop(s); // Close the channel.
 /// });
 ///
 /// // Collect all messages from the channel.

@@ -1,4 +1,4 @@
-# New mpsc channels for Rust
+# Proposed new channels for Rust's standard library
 
 Work in progress.
 
